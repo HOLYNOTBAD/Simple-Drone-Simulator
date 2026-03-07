@@ -1,0 +1,61 @@
+# Physical parameters for the AscTec Hummingbird.
+# Sources:
+# - https://digitalrepository.unm.edu/cgi/viewcontent.cgi?article=1189&context=ece_etds
+# - https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=7991501
+
+mass: 0.500
+g: 9.81
+
+# Inertial properties
+Ixx: 3.65e-3
+Iyy: 3.68e-3
+Izz: 7.03e-3
+Ixy: 0.0
+Iyz: 0.0
+Ixz: 0.0
+
+# Command/actuation abstraction for current L1 dynamics
+rate_kp: 0.08
+omega_max: 8.0
+thrust_min: 0.0
+thrust_max: 40.0
+
+# Geometry
+arm_length: 0.17
+num_rotors: 4
+rotor_radius: 0.10
+rotor_pos:
+  r1: [0.1202081528, 0.1202081528, 0.0]
+  r2: [0.1202081528, -0.1202081528, 0.0]
+  r3: [-0.1202081528, -0.1202081528, 0.0]
+  r4: [-0.1202081528, 0.1202081528, 0.0]
+rotor_directions: [1, -1, 1, -1]
+rI: [0.0, 0.0, 0.0]
+
+# Frame aerodynamic properties
+c_Dx: 0.5e-2
+c_Dy: 0.5e-2
+c_Dz: 1e-2
+
+# Rotor properties
+k_eta: 5.57e-06
+k_m: 1.36e-07
+k_d: 1.19e-04
+k_z: 2.32e-04
+k_h: 3.39e-3
+k_flap: 0.0
+
+# Motor properties
+tau_m: 0.005
+rotor_speed_min: 0.0
+rotor_speed_max: 1500.0
+motor_noise_std: 0.0
+motor_current_min: 0.0
+motor_current_max: 40.0
+motor_k_current: 40.0
+
+# Lower-level controller properties (stored for future use)
+k_w: 1.0
+k_v: 10.0
+kp_att: 544.0
+kd_att: 46.64

@@ -1,0 +1,84 @@
+# configs/ibvs_so3_ctrl.yaml
+
+# --- timing / rates ---
+rates:
+  physics_hz: 1000.0
+  control_hz: 200.0
+  camera_hz: 30.0
+  visualization_hz: 24.0
+
+visualization:
+  enable: true
+  realtime: true
+  enable_fov: true
+  trail_len: 1000
+  auto_axis: false
+  ned_axes: true
+  uav_visual_scale: 1.0
+  target_marker_size: 6.0
+  fov_target_marker_size: 7.0
+  map_center: [30.0, 0.0, 0.0]
+  map_size: [1200.0, 800.0, 400.0]
+  colors:
+    uav_traj: [158, 22, 157, 140]
+    uav_body_left: [22, 5, 139]
+    uav_body_right: [98, 0, 170]
+    uav_arrow: [204, 74, 116]
+    target_traj: [252, 180, 49]
+    target_dot: [235, 120, 82]
+    fov_target: [181, 35, 4]
+    fov_status_no_target: [181, 35, 4]
+    fov_status_has_target: [0, 128, 0]
+
+termination:
+  t_final: 20.0
+  hit_radius: 10
+
+# --- UAV initial state (NED / FRD) ---
+uav0:
+  t: 0.0
+  p_e: [0.0, 0.0, 0.0]        # N, E, D (m)
+  v_e: [0.0, 0.0, 0.0]        # m/s
+  q_eb: [1.0, 0.0, 0.0, 0.0]  # identity: body aligned with world
+  w_b: [0.0, 0.0, 0.0]        # rad/s
+
+# --- Target initial state (NED) ---
+tgt0:
+  t: 0.0
+  p_e: [800.0, 0.0, 0.0]
+  v_e: [-6.0, 6.0, 0.0]
+
+target:
+  accel_e: null               # e.g. [0.0, 0.0, 0.0] for constant accel
+
+# --- Rigid body dynamics (loaded from yaml) ---
+rigid_body:
+  params_yaml: "configs/hummingbird.yaml"
+
+# --- Camera intrinsics ---
+camera:
+  fx: 320.0
+  fy: 320.0
+  cx: 320.0
+  cy: 240.0
+  width: 640
+  height: 480
+  mount_pitch_deg: 0.0
+
+# --- Controller (IBVS-SO3 baseline) ---
+controller:
+  mass: 0.5
+  g: 9.81
+  k_yaw: 2.0
+  k_pitch: 2.0
+  k_roll: 0.0
+  v_fwd_des: 8.0
+  k_vfwd: 0.8
+  omega_max: 6.0
+  thrust_bias: 0.0
+
+logging:
+  enable: false
+  run_dir: "runs"
+  filename: null   # null -> auto timestamp
+  seed: 0

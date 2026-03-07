@@ -1,0 +1,92 @@
+# configs/ibvs_ctrl.yaml
+
+rates:
+  physics_hz: 1000.0
+  control_hz: 200.0
+  camera_hz: 30.0
+  visualization_hz: 24.0
+
+visualization:
+  enable: true
+  realtime: true
+  enable_fov: true
+  trail_len: 1000
+  auto_axis: false
+  ned_axes: true
+  uav_visual_scale: 3.0
+  target_marker_size: 5.0
+  fov_target_marker_size: 7.0
+  map_center: [0.0, 0.0, 0.0]
+  map_size: [200.0, 100.0, 50.0]
+  colors:
+    uav_traj: [158, 22, 157, 140]
+    uav_body_left: [22, 5, 139]
+    uav_body_right: [98, 0, 170]
+    uav_arrow: [204, 74, 116]
+    target_traj: [252, 180, 49]
+    target_dot: [235, 120, 82]
+    fov_target: [181, 35, 4]
+    fov_status_no_target: [181, 35, 4]
+    fov_status_has_target: [0, 128, 0]
+
+monitor:
+  enable: true
+  realtime: true
+  max_points: null
+  step_stride: 10
+  title: "IBVS Controller Monitor"
+  x_min: 0.0
+
+termination:
+  t_final: 20.0
+  hit_radius: 10
+
+uav0:
+  t: 0.0
+  p_e: [-80.0, 0.0, 0.0]
+  v_e: [0.0, 0.0, 0.0]
+  q_eb: [1.0, 0.0, 0.0, 0.0]
+  w_b: [0.0, 0.0, 0.0]
+
+tgt0:
+  t: 0.0
+  p_e: [-30.0, 0.0, 0.0]
+  v_e: [1.0, 1.0, -1.0]
+
+target:
+  accel_e: null
+
+rigid_body:
+  params_yaml: "configs/hummingbird.yaml"
+
+camera:
+  fx: 320.0
+  fy: 320.0
+  cx: 0.0
+  cy: 0.0
+  width: 640
+  height: 480
+  mount_pitch_deg: 0.0
+
+controller:
+  mass: 0.5
+  g: 9.81
+  foc: 320.0
+  k1: 0.02
+  k2: 0.01
+  k3: 3
+  k4: -3
+  k5: 0.01
+  k6: -0.5
+  theta_th: -1 # rad
+  phi_d: 0.0
+  omega_max: 6.0
+  thrust_min: 0.0
+  thrust_max: 100.0
+  cos_theta_min: 0.2
+
+logging:
+  enable: false
+  run_dir: "runs"
+  filename: null
+  seed: 0
