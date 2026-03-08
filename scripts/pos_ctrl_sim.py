@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 import argparse
 
 import numpy as np
@@ -21,8 +20,6 @@ from models.state import Observation, TargetState, UAVState
 from sensors.camera import CameraExtrinsics, CameraIntrinsics, PinholeCamera
 from sim.scheduler import MultiRateScheduler, RateConfig
 from sim.simulator import Simulator, TerminationConfig
-from utils.log import NPZLogger
-from visualization.monitor import Monitor, MonitorConfig
 
 
 def _load_cfg(path: str) -> dict:
@@ -30,31 +27,16 @@ def _load_cfg(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def _build_observation(uav: UAVState, p_sp_e: np.ndarray) -> Observation:
-    return Observation(
-        t=uav.t,
-        p_norm=None,
-        q_eb=uav.q_eb,
-        w_b=uav.w_b,
-        v_e=uav.v_e,
-        p_r=uav.p_e - p_sp_e,
-        v_r=uav.v_e,
-        has_target=False,
-    )
-
-
-def _figure_eight_sp(t: float, center_e: np.ndarray) -> np.ndarray:
+def _figure_eight_sp(t: float, center_e: np.ndarray, out: np.ndarray | None = None) -> np.ndarray:
+    if out is None:
+        out = np.empty(3, dtype=float)
     amp_x = 50.0
     amp_y = 35.0
     omega = 2.0 * np.pi / 36.0
-    return np.array(
-        [
-            center_e[0] + amp_x * np.sin(omega * t),
-            center_e[1] + amp_y * np.sin(2.0 * omega * t),
-            center_e[2],
-        ],
-        dtype=float,
-    )
+    out[0] = center_e[0] + amp_x * np.sin(omega * t)
+    out[1] = center_e[1] + amp_y * np.sin(2.0 * omega * t)
+    out[2] = center_e[2]
+    return out
 
 
 def _figure_eight_yaw_sp(t: float) -> float:
@@ -72,13 +54,10 @@ def main() -> None:
     ap.add_argument("--p-sp", type=float, nargs=3, default=None, help="position setpoint in NED")
     ap.add_argument("--yaw-sp", type=float, default=None, help="yaw setpoint placeholder")
     ap.add_argument("--t-final", type=float, default=None, help="override simulation horizon")
-    ap.add_argument("--log-name", type=str, default="pos_ctrl_sim.npz")
     args = ap.parse_args()
 
     cfg = _load_cfg(args.config)
-    logger_cfg = cfg.get("logging", {})
-
-    seed = int(logger_cfg.get("seed", 0))
+    seed = int(cfg.get("seed", cfg.get("logging", {}).get("seed", 0)))
     np.random.seed(seed)
 
     rates_cfg = cfg["rates"]
@@ -91,7 +70,6 @@ def main() -> None:
     sch = MultiRateScheduler(rates)
 
     viz_cfg = cfg.get("visualization", {})
-    mon_cfg = cfg.get("monitor", {})
     sim_viz = Simulator(
         scheduler=sch,
         enable=bool(viz_cfg.get("enable", True)),
@@ -130,9 +108,11 @@ def main() -> None:
     )
     yaw_sp_cfg = float(args.yaw_sp if args.yaw_sp is not None else pos_sp_cfg.get("yaw_sp", 0.0))
     use_traj_yaw = args.yaw_sp is None
-    p_sp_e = _figure_eight_sp(uav.t, p_sp_center_e)
+    p_sp_e = np.empty(3, dtype=float)
+    _figure_eight_sp(uav.t, p_sp_center_e, out=p_sp_e)
     yaw_sp = _figure_eight_yaw_sp(uav.t) if use_traj_yaw else yaw_sp_cfg
-    tgt = TargetState(t=uav.t, p_e=p_sp_e.copy(), v_e=np.zeros(3, dtype=float))
+    zero3 = np.zeros(3, dtype=float)
+    tgt = TargetState(t=uav.t, p_e=p_sp_e.copy(), v_e=zero3)
 
     rb_params = RigidBodyParams.from_yaml(cfg["rigid_body"]["params_yaml"])
     uav_model = RigidBody6DoF(rb_params)
@@ -183,7 +163,8 @@ def main() -> None:
         attitude_controller=att_ctrl,
     )
 
-    basic_ctrl.update_setpoint(PositionSetpoint(p_sp_e=p_sp_e, yaw_sp=yaw_sp))
+    pos_sp = PositionSetpoint(p_sp_e=p_sp_e, yaw_sp=yaw_sp)
+    basic_ctrl.update_setpoint(pos_sp)
     basic_ctrl.reset()
     motors.reset()
 
@@ -191,69 +172,50 @@ def main() -> None:
     t_final = float(args.t_final if args.t_final is not None else term_cfg.get("t_final", 20.0))
     hit_radius = float(term_cfg.get("hit_radius", 10))
     term = TerminationConfig(t_final=t_final, hit_radius=hit_radius)
-    monitor = Monitor(
-        scheduler=sch,
-        cfg=MonitorConfig(
-            enable=bool(mon_cfg.get("enable", True)),
-            realtime=bool(mon_cfg.get("realtime", True)),
-            max_points=mon_cfg.get("max_points", None),
-            step_stride=int(mon_cfg.get("step_stride", 1)),
-            title=str(mon_cfg.get("title", "Position Controller Monitor")),
-            x_min=float(mon_cfg.get("x_min", 0.0)),
-            x_max=float(mon_cfg.get("x_max", t_final)),
-        ),
-    )
-
-    logging_enabled = bool(logger_cfg.get("enable", True))
-    logger = NPZLogger(run_dir=str(logger_cfg.get("run_dir", "runs"))) if logging_enabled else None
 
     steps = int(np.ceil(term.t_final / sch.dt))
-    err_norm = float(np.linalg.norm(uav.p_e - p_sp_e))
+    obs_p_r = np.zeros(3, dtype=float)
+    np.subtract(uav.p_e, p_sp_e, out=obs_p_r)
+    obs = Observation(
+        t=uav.t,
+        p_norm=None,
+        q_eb=uav.q_eb,
+        w_b=uav.w_b,
+        v_e=uav.v_e,
+        p_r=obs_p_r,
+        v_r=uav.v_e,
+        has_target=False,
+    )
+    err_norm = float(np.linalg.norm(obs_p_r))
     last_cam = None
 
     ############### Main simulation loop ##############
 
     for k in range(steps):
-        p_sp_e = _figure_eight_sp(uav.t, p_sp_center_e)
+        _figure_eight_sp(uav.t, p_sp_center_e, out=p_sp_e)
         yaw_sp = _figure_eight_yaw_sp(uav.t) if use_traj_yaw else yaw_sp_cfg
-        tgt = TargetState(t=uav.t, p_e=p_sp_e.copy(), v_e=np.zeros(3, dtype=float))
+        pos_sp.yaw_sp = yaw_sp
+        tgt.t = uav.t
+        np.copyto(tgt.p_e, p_sp_e)
         if sch.should_camera(k):
             last_cam = camera.measure(uav, tgt, t_meas=uav.t)
-        basic_ctrl.update_setpoint(PositionSetpoint(p_sp_e=p_sp_e, yaw_sp=yaw_sp))
-        obs = _build_observation(uav, p_sp_e)
+        obs.t = uav.t
+        obs.q_eb = uav.q_eb
+        obs.w_b = uav.w_b
+        obs.v_e = uav.v_e
+        obs.v_r = uav.v_e
+        np.subtract(uav.p_e, p_sp_e, out=obs_p_r)
         motor_cmd = basic_ctrl.step(uav_state=uav, obs=obs, t_now=uav.t, dt=sch.dt)
         motor_out = motors.step(motor_cmd.motor_current_cmd, sch.dt)
 
         uav = uav_model.step(uav, force_b=motor_out.force_b, torque_b=motor_out.torque_b, dt=sch.dt)
 
-        tgt = TargetState(t=uav.t, p_e=p_sp_e.copy(), v_e=np.zeros(3, dtype=float))
+        tgt.t = uav.t
+        np.copyto(tgt.p_e, p_sp_e)
         sim_viz.update(step=k, uav=uav, tgt=tgt, cam=last_cam, has_target=(last_cam.valid if last_cam is not None else False))
-        monitor.push(name="x_actual", color="tab:blue", data=uav.p_e[0], t=uav.t, group="pos_x", step=k)
-        monitor.push(name="x_ref", color="black", data=p_sp_e[0], t=uav.t, group="pos_x", step=k)
-        monitor.push(name="y_actual", color="tab:orange", data=uav.p_e[1], t=uav.t, group="pos_y", step=k)
-        monitor.push(name="y_ref", color="black", data=p_sp_e[1], t=uav.t, group="pos_y", step=k)
-        monitor.push(name="z_actual", color="tab:green", data=uav.p_e[2], t=uav.t, group="pos_z", step=k)
-        monitor.push(name="z_ref", color="black", data=p_sp_e[2], t=uav.t, group="pos_z", step=k)
-        monitor.push(name="yaw_ref", color="tab:red", data=yaw_sp, t=uav.t, group="yaw", step=k)
-        monitor.update(step=k)
 
-        err = uav.p_e - p_sp_e
-        err_norm = float(np.linalg.norm(err))
-
-        # Log data at each step
-        if logger is not None:
-            logger.push("t", uav.t)
-            logger.push("uav_p", uav.p_e)
-            logger.push("uav_v", uav.v_e)
-            logger.push("uav_q", uav.q_eb)
-            logger.push("uav_w", uav.w_b)
-            logger.push("p_sp", p_sp_e)
-            logger.push("yaw_sp", yaw_sp)
-            logger.push("pos_err", err)
-            logger.push("pos_err_norm", err_norm)
-            logger.push("motor_cmd", motor_cmd.motor_current_cmd)
-            logger.push("motor_omega", motor_out.omega)
-
+        np.subtract(uav.p_e, p_sp_e, out=obs_p_r)
+        err_norm = float(np.linalg.norm(obs_p_r))
 
     ############## Simulation ended, prepare summary and save logs if enabled ##############
     summary = {
@@ -265,24 +227,9 @@ def main() -> None:
         "t_final": float(uav.t),
     }
 
-    save_path = None
-    if logger is not None:
-        save_path = logger.save(
-            meta={
-                "config": Path(args.config).as_posix(),
-                "seed": seed,
-                "summary": summary,
-            },
-            filename=args.log_name,
-        )
-
     print("=== Position Control Summary ===")
     for k, v in summary.items():
         print(f"{k}: {v}")
-    if save_path is not None:
-        print(f"saved: {save_path}")
-    else:
-        print("logging disabled: no file saved")
 
     sim_viz.close(block=True)
 

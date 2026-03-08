@@ -111,7 +111,6 @@ class IBVSController(ControllerBase):
         ex = float(self.p.foc * obs.p_norm[0])
         ey = float(self.p.foc * obs.p_norm[1])
         theta_d = float(max(self.p.theta_th, np.arctan2(-ey, self.p.foc)))
-        print(f"theta_d (deg): {np.degrees(theta_d):.2f}")
         phi_d = float(self.p.phi_d)
 
         v_rel_c = self._relative_velocity_camera(obs)

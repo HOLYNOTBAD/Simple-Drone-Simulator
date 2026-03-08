@@ -55,7 +55,20 @@ class Monitor:
         backend_is_noninteractive = False
         if plt is not None:
             backend = str(plt.get_backend()).lower()
-            backend_is_noninteractive = "agg" in backend
+            backend_name = backend.split(".")[-1]
+            noninteractive_backends = {
+                "agg",
+                "cairo",
+                "pdf",
+                "pgf",
+                "ps",
+                "svg",
+                "template",
+                "backend_inline",
+            }
+            backend_is_noninteractive = (
+                backend_name in noninteractive_backends or "backend_inline" in backend
+            )
             if cfg.enable and backend_is_noninteractive:
                 print(f"[Monitor] disabled: non-interactive matplotlib backend '{backend}'")
 

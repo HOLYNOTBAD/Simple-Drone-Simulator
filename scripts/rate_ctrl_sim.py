@@ -25,13 +25,12 @@ def _load_cfg(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def _omega_sp(t_now: float) -> np.ndarray:
-    omega_sp_b = np.zeros(3, dtype=float)
-    omega_sp_b[0] = np.cos(2.0 * np.pi * t_now)
-    omega_sp_b[1] = np.cos(2.0 * np.pi * t_now)
-    omega_sp_b[2] = 1.0
-
-    return omega_sp_b
+def _omega_sp(t_now: float, out: np.ndarray) -> np.ndarray:
+    c = np.cos(2.0 * np.pi * t_now)
+    out[0] = c
+    out[1] = c
+    out[2] = 1.0
+    return out
 
 
 def main() -> None:
@@ -108,10 +107,12 @@ def main() -> None:
     )
 
     steps = int(np.ceil(term.t_final / sch.dt))
+    omega_sp_b = np.zeros(3, dtype=float)
+    rate_sp = RateThrustSetpoint(omega_sp_b=omega_sp_b, thrust_sp=thrust_sp)
+    basic_ctrl.update_setpoint(rate_sp)
 
     for k in range(steps):
-        omega_sp_b = _omega_sp(uav.t)
-        basic_ctrl.update_setpoint(RateThrustSetpoint(omega_sp_b=omega_sp_b, thrust_sp=thrust_sp))
+        _omega_sp(uav.t, omega_sp_b)
 
         obs = observer.make_observation(t_now=uav.t, uav=uav, cam=None, tgt=None)
         motor_cmd = basic_ctrl.step(uav_state=uav, obs=obs, t_now=uav.t, dt=sch.dt)

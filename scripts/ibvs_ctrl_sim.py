@@ -11,7 +11,7 @@ try:
 except ImportError as e:
     raise SystemExit("Please install PyYAML: pip install pyyaml") from e
 
-from models.state import UAVState, TargetState
+from models.state import ControlCommand, UAVState, TargetState
 from models.rigid_body import RigidBodyParams, RigidBody6DoF
 from models.motors import Motors
 from models.target import TargetParams, TargetPointMass
@@ -162,11 +162,15 @@ def main():
     # --- Run loop (explicit here, using scheduler and modules) ---
     uav = uav0
     tgt = tgt0
-    last_cmd_thrust = rb_params.mass * rb_params.g
-    last_cmd_omega = np.zeros(3)
+    last_cmd = ControlCommand(
+        t=uav.t,
+        thrust=float(rb_params.mass * rb_params.g),
+        omega_cmd_b=np.zeros(3, dtype=float),
+    )
     last_i_cmd = np.zeros(rb_params.num_rotors, dtype=float)
     last_omega = np.zeros(rb_params.num_rotors, dtype=float)
     last_cam = None
+    nan2 = (np.nan, np.nan)
 
     steps = int(np.ceil(term_cfg.t_final / sch.dt))
     for k in range(steps):
@@ -182,12 +186,9 @@ def main():
         # control
         if sch.should_control(k):
             cmd = controller.compute(obs)
-            last_cmd_thrust = cmd.thrust
-            last_cmd_omega = cmd.omega_cmd_b
+            last_cmd = cmd
         else:
-            # hold last command
-            from models.state import ControlCommand
-            cmd = ControlCommand(t=t_now, thrust=float(last_cmd_thrust), omega_cmd_b=last_cmd_omega)
+            cmd = last_cmd
 
         # low-level control + motors + physics
         force_sp, motor_cmd = basic_ctrl.step_from_command(uav, cmd, sch.dt)
@@ -223,16 +224,16 @@ def main():
 
             if last_cam is None:
                 logger.push("cam_valid", False)
-                logger.push("cam_p_norm", [np.nan, np.nan])
-                logger.push("cam_uv", [np.nan, np.nan])
+                logger.push("cam_p_norm", nan2)
+                logger.push("cam_uv", nan2)
             else:
                 logger.push("cam_valid", bool(last_cam.valid))
                 if last_cam.p_norm is None:
-                    logger.push("cam_p_norm", [np.nan, np.nan])
+                    logger.push("cam_p_norm", nan2)
                 else:
                     logger.push("cam_p_norm", last_cam.p_norm)
                 if last_cam.uv_px is None:
-                    logger.push("cam_uv", [np.nan, np.nan])
+                    logger.push("cam_uv", nan2)
                 else:
                     logger.push("cam_uv", last_cam.uv_px)
 

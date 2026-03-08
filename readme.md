@@ -4,15 +4,51 @@
 
 # 0. Run simulation
 
-运行简单IBVS仿真 ICRA
+## Python Environment
 
-```python
- python -m scripts.ibvs_sim --config configs/ibvs_ctrl.yaml   
+Recommended environment (Conda):
+
+```bash
+# 1) Create environment
+conda create -y -n SimpleDroneSim python=3.10 numpy pyyaml matplotlib
+
+# 2) Activate
+conda activate SimpleDroneSim
+
+# 3) (Optional) Ensure Qt backend is available for interactive visualization
+conda install -y pyqt
+python -c "import matplotlib; print(matplotlib.get_backend())"
 ```
 
-运行IBVS SO3 仿真 TCST
+If visualization windows do not show up:
 
-运行位置控制仿真
+```bash
+export MPLBACKEND=QtAgg
+echo $DISPLAY
+```
+
+Quick run check:
+
+```bash
+python -m scripts.ibvs_ctrl_sim --config configs/ibvs_ctrl.yaml
+python -m scripts.pos_ctrl_sim --config configs/pos_ctrl.yaml
+```
+
+## Demos
+
+1.Simple IBVS-based Anti-UAV demo, related paper:【2020ICRA】An Autonomous Intercept Drone with Image-based Visual Servo
+
+```python
+ python -m scripts.ibvs_ctrl_sim --config configs/ibvs_ctrl.yaml   
+```
+
+2.Simple IBVS-based Anti-UAV demo, related paper:【2025TCST】High-Speed Interception Multicopter Control by Image-based Visual Servoing
+
+```python
+ python -m scripts.ibvs_so3_sim --config configs/ibvs_so3_ctrl.yaml   
+```
+
+3.Traj Following demo Using PX4-LIKE position control interface:
 
 ```python
 python -m scripts.pos_ctrl_sim --config configs/pos_ctrl.yaml
@@ -68,9 +104,6 @@ We currently focus on building a practical baseline with a clear path for extens
 
 # 3. Future
 
-* Point-mass baseline mode for early-stage guidance validation
-* PX4-like cascaded basic control stack
-  * Position -> Velocity -> Attitude -> Rate -> Allocation
 * Sensor delay, noise, dropout, and bias models
 * Wind field model
 * Rotor drag, flapping, and richer aerodynamic effects

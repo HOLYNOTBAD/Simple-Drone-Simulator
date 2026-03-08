@@ -5,13 +5,13 @@ rates:
   physics_hz: 200.0
   control_hz: 100.0
   camera_hz: 30.0
-  visualization_hz: 12.0
+  visualization_hz: 24.0
 
 visualization:
   enable: true
-  realtime: true
-  enable_fov: true
-  trail_len: 1000
+  realtime: false
+  enable_fov: false
+  trail_len: 200
   auto_axis: false
   ned_axes: true
   uav_visual_scale: 2.0
@@ -27,13 +27,6 @@ visualization:
     target_traj: [252, 180, 49]
     target_dot: [235, 120, 82]
 
-monitor:
-  enable: false
-  realtime: true
-  max_points: null
-  step_stride: 100
-  title: "Position Controller Monitor"
-  x_min: 0.0
 
 termination:
   t_final: 1000.0
@@ -77,8 +70,3 @@ attitude_controller:
   k_r: [4.0, 4.0, 2.0]
   omega_max: 6.0
 
-logging:
-  enable: false
-  run_dir: "runs"
-  filename: null
-  seed: 0
