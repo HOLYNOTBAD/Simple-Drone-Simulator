@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
+from itertools import cycle
 
 import numpy as np
 
@@ -98,6 +99,8 @@ class Simulator:
 
         self._u_hist: list[np.ndarray] = []
         self._t_hist: list[np.ndarray] = []
+        self._u_hists: dict[str, list[np.ndarray]] = {}
+        self._t_hists: dict[str, list[np.ndarray]] = {}
         self._last_vis_wall_t: float | None = None
 
         self.fig = None
@@ -116,6 +119,21 @@ class Simulator:
         self.ax_fov = None
         self._fov_target_dot = None
         self._fov_status_text = None
+        self._multi_artists: dict[str, dict[str, object]] = {}
+        self._color_cycle = cycle(
+            [
+                (31 / 255.0, 119 / 255.0, 180 / 255.0),
+                (255 / 255.0, 127 / 255.0, 14 / 255.0),
+                (44 / 255.0, 160 / 255.0, 44 / 255.0),
+                (214 / 255.0, 39 / 255.0, 40 / 255.0),
+                (148 / 255.0, 103 / 255.0, 189 / 255.0),
+                (140 / 255.0, 86 / 255.0, 75 / 255.0),
+                (227 / 255.0, 119 / 255.0, 194 / 255.0),
+                (127 / 255.0, 127 / 255.0, 127 / 255.0),
+                (188 / 255.0, 189 / 255.0, 34 / 255.0),
+                (23 / 255.0, 190 / 255.0, 207 / 255.0),
+            ]
+        )
 
         if self.enable:
             plt.ion()
@@ -164,11 +182,8 @@ class Simulator:
         uav_traj_color = self.colors["uav_traj"]
         traj_alpha = 1.0 if len(uav_traj_color) < 4 else uav_traj_color[3]
         traj_rgb = uav_traj_color[:3]
-        (self._u_line,) = self.ax.plot([], [], [], lw=0.9, alpha=traj_alpha, color=traj_rgb, label="UAV Traj")
-        target_traj_kwargs = {"lw": 1.5, "label": "Target Traj"}
-        if self.colors["target_traj"] is not None:
-            target_traj_kwargs["color"] = self.colors["target_traj"]
-        (self._t_line,) = self.ax.plot([], [], [], **target_traj_kwargs)
+        (self._u_line,) = self.ax.plot([], [], [], lw=0.9, alpha=traj_alpha, color=traj_rgb)
+        self._t_line = None
         (self._t_dot,) = self.ax.plot(
             [],
             [],
@@ -200,7 +215,6 @@ class Simulator:
             )
             self.ax.add_collection3d(disk)
             self._u_rotor_disks.append(disk)
-        self.ax.legend(loc="best")
         self._apply_fixed_bounds()
         self._init_bbox_lines()
         self._update_bbox_lines_from_axes()
@@ -303,12 +317,27 @@ class Simulator:
         if len(self._t_hist) > self.trail_len:
             self._t_hist = self._t_hist[-self.trail_len :]
 
+    def _trim_histories(self) -> None:
+        self._trim_hist()
+        for key, hist in self._u_hists.items():
+            if len(hist) > self.trail_len:
+                self._u_hists[key] = hist[-self.trail_len :]
+        for key, hist in self._t_hists.items():
+            if len(hist) > self.trail_len:
+                self._t_hists[key] = hist[-self.trail_len :]
+
     def _update_bounds(self) -> None:
         pts = []
         if self._u_hist:
             pts.append(np.vstack(self._u_hist))
         if self._t_hist:
             pts.append(np.vstack(self._t_hist))
+        for hist in self._u_hists.values():
+            if hist:
+                pts.append(np.vstack(hist))
+        for hist in self._t_hists.values():
+            if hist:
+                pts.append(np.vstack(hist))
         if not pts:
             return
 
@@ -331,17 +360,64 @@ class Simulator:
         line.set_data([float(p0[0]), float(p1[0])], [float(p0[1]), float(p1[1])])
         line.set_3d_properties([float(p0[2]), float(p1[2])])
 
-    def vis_uav(self, uav: UAVState) -> None:
-        if not self.enable:
-            return
-        self._u_hist.append(np.asarray(uav.p_e, dtype=float).copy())
-        self._trim_hist()
+    def _make_uav_artists(self, key: str) -> dict[str, object]:
+        base_color = next(self._color_cycle)
+        light_color = tuple(min(1.0, c * 0.75 + 0.25) for c in base_color)
+        dark_color = tuple(max(0.0, c * 0.75) for c in base_color)
+        alpha = 0.7
+        (u_line,) = self.ax.plot([], [], [], lw=1.0, alpha=alpha, color=base_color)
+        (u_arm1,) = self.ax.plot([], [], [], color=dark_color, lw=2.0)
+        (u_arm2,) = self.ax.plot([], [], [], color=light_color, lw=2.0)
+        (u_forward,) = self.ax.plot([], [], [], color=base_color, lw=1.4)
+        (u_forward_h1,) = self.ax.plot([], [], [], color=base_color, lw=1.2)
+        (u_forward_h2,) = self.ax.plot([], [], [], color=base_color, lw=1.2)
+        rotor_disks = []
+        rotor_colors = [light_color, dark_color, dark_color, light_color]
+        for rotor_color in rotor_colors:
+            disk = Poly3DCollection(
+                [],
+                facecolors=rotor_color,
+                edgecolors=rotor_color,
+                linewidths=0.6,
+                alpha=0.9,
+            )
+            self.ax.add_collection3d(disk)
+            rotor_disks.append(disk)
+        return {
+            "u_line": u_line,
+            "u_arm1": u_arm1,
+            "u_arm2": u_arm2,
+            "u_forward": u_forward,
+            "u_forward_h1": u_forward_h1,
+            "u_forward_h2": u_forward_h2,
+            "u_rotor_disks": rotor_disks,
+        }
 
-        up = np.vstack(self._u_hist)
-        self._u_line.set_data(up[:, 0], up[:, 1])
-        self._u_line.set_3d_properties(up[:, 2])
+    def _make_target_artists(self, key: str) -> dict[str, object]:
+        base_color = next(self._color_cycle)
+        (t_dot,) = self.ax.plot([], [], [], marker="o", ms=self.target_marker_size, color=base_color, linestyle="None")
+        return {
+            "t_dot": t_dot,
+        }
 
-        # Draw UAV body with actual attitude (q_eb: body->world, FRD body frame).
+    def _get_multi_artists(self, key: str) -> dict[str, object]:
+        artists = self._multi_artists.get(key)
+        if artists is None:
+            artists = {}
+            artists.update(self._make_uav_artists(key))
+            artists.update(self._make_target_artists(key))
+            self._multi_artists[key] = artists
+        return artists
+
+    def _vis_uav_on_artists(self, uav: UAVState, hist: list[np.ndarray], artists: dict[str, object]) -> None:
+        hist.append(np.asarray(uav.p_e, dtype=float).copy())
+        if len(hist) > self.trail_len:
+            del hist[:-self.trail_len]
+
+        up = np.vstack(hist)
+        artists["u_line"].set_data(up[:, 0], up[:, 1])
+        artists["u_line"].set_3d_properties(up[:, 2])
+
         p = np.asarray(uav.p_e, dtype=float).reshape(3)
         R = quat_to_R(uav.q_eb)
 
@@ -350,7 +426,6 @@ class Simulator:
         arrow_len = 2.24 * arm_len
         arrow_head = 0.35 * arm_len
 
-        # Blue X-body (two arms in the body x-y plane).
         b_a1 = np.array([diag, diag, 0.0], dtype=float)
         b_a2 = np.array([-diag, -diag, 0.0], dtype=float)
         b_b1 = np.array([diag, -diag, 0.0], dtype=float)
@@ -361,10 +436,9 @@ class Simulator:
         e_b1 = p + R @ b_b1
         e_b2 = p + R @ b_b2
 
-        self._set_line3d(self._u_arm1, e_a1, e_a2)
-        self._set_line3d(self._u_arm2, e_b1, e_b2)
+        self._set_line3d(artists["u_arm1"], e_a1, e_a2)
+        self._set_line3d(artists["u_arm2"], e_b1, e_b2)
 
-        # Four blue rotor disks (filled circles in UAV body plane).
         rotors = np.vstack([e_a1, e_a2, e_b1, e_b2])
         rotor_r = 0.48 * arm_len
         e_x = R @ np.array([1.0, 0.0, 0.0], dtype=float)
@@ -372,37 +446,103 @@ class Simulator:
         th = np.linspace(0.0, 2.0 * np.pi, 24, endpoint=False)
         cth = np.cos(th)
         sth = np.sin(th)
-        for disk, c in zip(self._u_rotor_disks, rotors):
+        for disk, c in zip(artists["u_rotor_disks"], rotors):
             verts = [c + rotor_r * (cth_i * e_x + sth_i * e_y) for cth_i, sth_i in zip(cth, sth)]
             disk.set_verts([verts])
 
-        # Red forward arrow along +x_b, rotated into world.
         b_f = np.array([1.0, 0.0, 0.0], dtype=float)
         b_r = np.array([0.0, 1.0, 0.0], dtype=float)
         e_f = R @ b_f
         e_r = R @ b_r
 
         tip = p + arrow_len * e_f
-        self._set_line3d(self._u_forward, p, tip)
+        self._set_line3d(artists["u_forward"], p, tip)
 
         h_base = tip - arrow_head * e_f
         h1 = h_base + 0.5 * arrow_head * e_r
         h2 = h_base - 0.5 * arrow_head * e_r
-        self._set_line3d(self._u_forward_h1, tip, h1)
-        self._set_line3d(self._u_forward_h2, tip, h2)
+        self._set_line3d(artists["u_forward_h1"], tip, h1)
+        self._set_line3d(artists["u_forward_h2"], tip, h2)
+
+    def _vis_target_on_artists(self, tgt: TargetState, hist: list[np.ndarray], artists: dict[str, object]) -> None:
+        hist.append(np.asarray(tgt.p_e, dtype=float).copy())
+        if len(hist) > self.trail_len:
+            del hist[:-self.trail_len]
+
+        tp = np.vstack(hist)
+        artists["t_dot"].set_data([tp[-1, 0]], [tp[-1, 1]])
+        artists["t_dot"].set_3d_properties([tp[-1, 2]])
+
+    def vis_uav(self, uav: UAVState) -> None:
+        if not self.enable:
+            return
+        artists = {
+            "u_line": self._u_line,
+            "u_arm1": self._u_arm1,
+            "u_arm2": self._u_arm2,
+            "u_forward": self._u_forward,
+            "u_forward_h1": self._u_forward_h1,
+            "u_forward_h2": self._u_forward_h2,
+            "u_rotor_disks": self._u_rotor_disks,
+        }
+        self._vis_uav_on_artists(uav, self._u_hist, artists)
 
     def vis_target(self, tgt: TargetState) -> None:
         if not self.enable:
             return
-        self._t_hist.append(np.asarray(tgt.p_e, dtype=float).copy())
-        self._trim_hist()
+        artists = {
+            "t_dot": self._t_dot,
+        }
+        self._vis_target_on_artists(tgt, self._t_hist, artists)
 
-        tp = np.vstack(self._t_hist)
-        self._t_line.set_data(tp[:, 0], tp[:, 1])
-        self._t_line.set_3d_properties(tp[:, 2])
+    def update_multi(
+        self,
+        step: int,
+        uavs: dict[str, UAVState],
+        tgts: dict[str, TargetState] | None = None,
+        cam: CameraMeasurement | None = None,
+        has_target: bool | None = None,
+    ) -> None:
+        if not self.enable:
+            return
+        if not self.sch.should_visualization(step):
+            return
+        if not uavs:
+            return
 
-        self._t_dot.set_data([tp[-1, 0]], [tp[-1, 1]])
-        self._t_dot.set_3d_properties([tp[-1, 2]])
+        if self.realtime:
+            vis_interval = self.sch.dt * self.sch.n_visualization
+            now = time.perf_counter()
+            if self._last_vis_wall_t is not None:
+                wait_s = vis_interval - (now - self._last_vis_wall_t)
+                if wait_s > 0.0:
+                    time.sleep(wait_s)
+            self._last_vis_wall_t = time.perf_counter()
+
+        for key, uav in uavs.items():
+            artists = self._get_multi_artists(key)
+            hist = self._u_hists.setdefault(key, [])
+            self._vis_uav_on_artists(uav, hist, artists)
+            if tgts is not None and key in tgts:
+                tgt_hist = self._t_hists.setdefault(key, [])
+                self._vis_target_on_artists(tgts[key], tgt_hist, artists)
+
+        self.vis_fov(cam, has_target=has_target)
+        self._trim_histories()
+        if self.auto_axis:
+            self._update_bounds()
+        else:
+            self._apply_fixed_bounds()
+        self._update_bbox_lines_from_axes()
+
+        lead_key = next(iter(uavs.keys()))
+        lead_uav = uavs[lead_key]
+        self.ax.set_title(f"Real-time Multi-UAV Visualization | count={len(uavs)} | t={lead_uav.t:.2f}s")
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+        if self.enable_fov and (self.ax_fov is not None):
+            self.ax_fov.set_title(f"Camera FOV (First-person) | t={lead_uav.t:.2f}s")
+        plt.pause(0.001)
 
     def vis_fov(self, cam: CameraMeasurement | None, has_target: bool | None = None) -> None:
         if (not self.enable) or (not self.enable_fov) or (self._fov_target_dot is None):
