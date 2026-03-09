@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from dataclasses import fields
 import argparse
+import time
 import numpy as np
 
 try:
@@ -33,6 +34,8 @@ def _load_cfg(path: str) -> dict:
 
 
 def main():
+
+    
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=str, default="configs/ibvs_ctrl.yaml")
     args = ap.parse_args()
@@ -76,6 +79,9 @@ def main():
         uav_visual_scale=float(viz_cfg.get("uav_visual_scale", 1.0)),
         target_marker_size=float(viz_cfg.get("target_marker_size", 6.0)),
         fov_target_marker_size=float(viz_cfg.get("fov_target_marker_size", 7.0)),
+        fov_target_marker_size_min=float(viz_cfg.get("fov_target_marker_size_min", 4.0)),
+        fov_target_marker_size_max=float(viz_cfg.get("fov_target_marker_size_max", 18.0)),
+        fov_target_diameter_m=float(viz_cfg.get("fov_target_diameter_m", 1.0)),
     )
 
     # Initial states
@@ -169,8 +175,12 @@ def main():
     )
     last_i_cmd = np.zeros(rb_params.num_rotors, dtype=float)
     last_omega = np.zeros(rb_params.num_rotors, dtype=float)
-    last_cam = None
+    last_cam = camera.measure(uav, tgt, t_meas=uav.t)
+    initial_obs = observer.make_observation(t_now=uav.t, uav=uav, cam=last_cam, tgt=tgt)
     nan2 = (np.nan, np.nan)
+
+    sim_viz.update(step=0, uav=uav, tgt=tgt, cam=last_cam, has_target=initial_obs.has_target)
+    time.sleep(2.0)
 
     steps = int(np.ceil(term_cfg.t_final / sch.dt))
     for k in range(steps):
@@ -200,6 +210,7 @@ def main():
         last_omega = motor_out.omega
         sim_viz.update(step=k, uav=uav, tgt=tgt, cam=last_cam, has_target=obs.has_target)
         actual_thrust = float(-motor_out.force_b[2])
+        monitor.push(name="cmd_thrust", color="tab:red", data=force_sp.thrust_sp, t=t_now, group="command", step=k)
         monitor.push(name="actual_thrust", color="tab:blue", data=actual_thrust, t=t_now, group="command", step=k)
         monitor.push(name="cmd_x", color="tab:red", data=cmd.omega_cmd_b[0], t=t_now, group="omega_cmd", step=k)
         monitor.push(name="cmd_y", color="tab:red", data=cmd.omega_cmd_b[1], t=t_now, group="omega_cmd", step=k)

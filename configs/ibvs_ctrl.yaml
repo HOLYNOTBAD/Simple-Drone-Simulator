@@ -16,8 +16,9 @@ visualization:
   uav_visual_scale: 3.0
   target_marker_size: 5.0
   fov_target_marker_size: 7.0
-  map_center: [0.0, 0.0, 0.0]
-  map_size: [200.0, 100.0, 50.0]
+  fov_target_diameter_m: 2.0
+  map_center: [0.0, 0.0, -50.0]
+  map_size: [200.0, 100.0, 100.0]
   colors:
     uav_traj: [158, 22, 157, 140]
     uav_body_left: [22, 5, 139]
@@ -38,8 +39,8 @@ monitor:
   x_min: 0.0
 
 termination:
-  t_final: 20.0
-  hit_radius: 10
+  t_final: 100.0
+  hit_radius: 2.0
 
 uav0:
   t: 0.0
@@ -50,8 +51,8 @@ uav0:
 
 tgt0:
   t: 0.0
-  p_e: [-30.0, 0.0, 0.0]
-  v_e: [1.0, 1.0, -1.0]
+  p_e: [30.0, 0.0, 0.0]
+  v_e: [2.0, 0.0, -6.0]
 
 target:
   accel_e: null
@@ -72,18 +73,18 @@ controller:
   mass: 0.5
   g: 9.81
   foc: 320.0
-  k1: 0.02
-  k2: 0.01
-  k3: 3
-  k4: -3
-  k5: 0.01
+  k1: 13.0
+  k2: 0.1
+  k3: 10
+  k4: 0.6
+  k5: 0.1
   k6: -0.5
-  theta_th: -1 # rad
+  theta_th: -0.6 # rad
   phi_d: 0.0
-  omega_max: 6.0
+  omega_max: 3.0
   thrust_min: 0.0
-  thrust_max: 100.0
-  cos_theta_min: 0.2
+  thrust_max: 6.0
+  cos_theta_min: 0.1
 
 logging:
   enable: false

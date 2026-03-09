@@ -56,6 +56,9 @@ class Simulator:
         uav_visual_scale: float = 1.0,
         target_marker_size: float = 6.0,
         fov_target_marker_size: float = 7.0,
+        fov_target_marker_size_min: float = 4.0,
+        fov_target_marker_size_max: float = 100.0,
+        fov_target_diameter_m: float = 5.0,
     ):
         self.sch = scheduler
         self.realtime = bool(realtime)
@@ -96,6 +99,9 @@ class Simulator:
         self.uav_visual_scale = float(uav_visual_scale)
         self.target_marker_size = float(target_marker_size)
         self.fov_target_marker_size = float(fov_target_marker_size)
+        self.fov_target_marker_size_min = float(min(fov_target_marker_size_min, fov_target_marker_size_max))
+        self.fov_target_marker_size_max = float(max(fov_target_marker_size_min, fov_target_marker_size_max))
+        self.fov_target_diameter_m = max(float(fov_target_diameter_m), 1e-6)
 
         self._u_hist: list[np.ndarray] = []
         self._t_hist: list[np.ndarray] = []
@@ -160,11 +166,12 @@ class Simulator:
             "uav_arrow": (204.0 / 255.0, 74.0 / 255.0, 116.0 / 255.0),
             "target_traj": (252.0 / 255.0, 180.0 / 255.0, 49.0 / 255.0),
             "target_dot": (235.0 / 255.0, 120.0 / 255.0, 82.0 / 255.0),
-            "fov_target": (181.0 / 255.0, 35.0 / 255.0, 4.0 / 255.0),
             "fov_status_no_target": (181.0 / 255.0, 35.0 / 255.0, 4.0 / 255.0),
             "fov_status_has_target": "green",
         }
-        return {k: self._parse_color(cfg.get(k), v) for k, v in defaults.items()}
+        colors = {k: self._parse_color(cfg.get(k), v) for k, v in defaults.items()}
+        colors["fov_target"] = colors["target_dot"]
+        return colors
 
     def _init_canvas(self) -> None:
         if self.enable_fov:
@@ -182,8 +189,11 @@ class Simulator:
         uav_traj_color = self.colors["uav_traj"]
         traj_alpha = 1.0 if len(uav_traj_color) < 4 else uav_traj_color[3]
         traj_rgb = uav_traj_color[:3]
+        target_traj_color = self.colors["target_traj"]
+        target_traj_alpha = 1.0 if len(target_traj_color) < 4 else target_traj_color[3]
+        target_traj_rgb = target_traj_color[:3]
         (self._u_line,) = self.ax.plot([], [], [], lw=0.9, alpha=traj_alpha, color=traj_rgb)
-        self._t_line = None
+        (self._t_line,) = self.ax.plot([], [], [], lw=1.0, alpha=target_traj_alpha, color=target_traj_rgb)
         (self._t_dot,) = self.ax.plot(
             [],
             [],
@@ -241,7 +251,26 @@ class Simulator:
 
         border_x = [-half_hfov_deg, half_hfov_deg, half_hfov_deg, -half_hfov_deg, -half_hfov_deg]
         border_y = [-half_vfov_deg, -half_vfov_deg, half_vfov_deg, half_vfov_deg, -half_vfov_deg]
-        self.ax_fov.plot(border_x, border_y, color="black", lw=1.4)
+        self.ax_fov.plot(border_x, border_y, color="black", lw=2.8, linestyle="-", zorder=3)
+
+        cross_half_w = 0.06 * half_hfov_deg
+        cross_half_h = 0.06 * half_vfov_deg
+        self.ax_fov.plot(
+            [-cross_half_w, cross_half_w],
+            [0.0, 0.0],
+            color="red",
+            lw=0.5,
+            linestyle="-",
+            zorder=4,
+        )
+        self.ax_fov.plot(
+            [0.0, 0.0],
+            [-cross_half_h, cross_half_h],
+            color="red",
+            lw=0.5,
+            linestyle="-",
+            zorder=4,
+        )
 
         # Red target marker
         (self._fov_target_dot,) = self.ax_fov.plot(
@@ -249,7 +278,7 @@ class Simulator:
             [],
             marker="o",
             markersize=self.fov_target_marker_size,
-            color=self.colors["fov_target"],
+            color=self.colors["target_dot"],
             linestyle="None",
         )
         self._fov_target_dot.set_visible(False)
@@ -275,6 +304,37 @@ class Simulator:
         else:
             self.ax.set_zlim(cz - hz, cz + hz)
         self.ax.set_box_aspect((float(self.map_size[0]), float(self.map_size[1]), float(self.map_size[2])))
+
+    def _fov_marker_size_for_apparent_angle(self, p_norm: np.ndarray | None, range_m: float | None) -> float:
+        if p_norm is None or range_m is None or self.ax_fov is None or self.fig is None:
+            return self.fov_target_marker_size
+        range_safe = max(float(range_m), 1e-6)
+        p_norm = np.asarray(p_norm, dtype=float).reshape(2)
+        x_norm = float(p_norm[0])
+        y_norm = float(p_norm[1])
+        depth_m = range_safe / np.sqrt(1.0 + x_norm * x_norm + y_norm * y_norm)
+        depth_m = max(float(depth_m), 1e-6)
+        radius_norm = 0.5 * self.fov_target_diameter_m / depth_m
+
+        x_left_deg = float(np.degrees(np.arctan(x_norm - radius_norm)))
+        x_right_deg = float(np.degrees(np.arctan(x_norm + radius_norm)))
+        y_bottom_deg = float(np.degrees(np.arctan(y_norm - radius_norm)))
+        y_top_deg = float(np.degrees(np.arctan(y_norm + radius_norm)))
+        x_center_deg = float(np.degrees(np.arctan(x_norm)))
+        y_center_deg = float(np.degrees(np.arctan(y_norm)))
+
+        p_left = self.ax_fov.transData.transform((x_left_deg, y_center_deg))
+        p_right = self.ax_fov.transData.transform((x_right_deg, y_center_deg))
+        p_bottom = self.ax_fov.transData.transform((x_center_deg, y_bottom_deg))
+        p_top = self.ax_fov.transData.transform((x_center_deg, y_top_deg))
+        diameter_px = max(
+            abs(float(p_right[0] - p_left[0])),
+            abs(float(p_top[1] - p_bottom[1])),
+        )
+        if diameter_px <= 1e-9:
+            return self.fov_target_marker_size
+        diameter_pt = diameter_px * 72.0 / float(self.fig.dpi)
+        return float(np.clip(diameter_pt, self.fov_target_marker_size_min, self.fov_target_marker_size_max))
 
     def _init_bbox_lines(self) -> None:
         # 12 edges of a box (wireframe only)
@@ -395,8 +455,10 @@ class Simulator:
 
     def _make_target_artists(self, key: str) -> dict[str, object]:
         base_color = next(self._color_cycle)
+        (t_line,) = self.ax.plot([], [], [], lw=1.0, alpha=0.7, color=base_color)
         (t_dot,) = self.ax.plot([], [], [], marker="o", ms=self.target_marker_size, color=base_color, linestyle="None")
         return {
+            "t_line": t_line,
             "t_dot": t_dot,
         }
 
@@ -470,6 +532,8 @@ class Simulator:
             del hist[:-self.trail_len]
 
         tp = np.vstack(hist)
+        artists["t_line"].set_data(tp[:, 0], tp[:, 1])
+        artists["t_line"].set_3d_properties(tp[:, 2])
         artists["t_dot"].set_data([tp[-1, 0]], [tp[-1, 1]])
         artists["t_dot"].set_3d_properties([tp[-1, 2]])
 
@@ -491,6 +555,7 @@ class Simulator:
         if not self.enable:
             return
         artists = {
+            "t_line": self._t_line,
             "t_dot": self._t_dot,
         }
         self._vis_target_on_artists(tgt, self._t_hist, artists)
@@ -558,6 +623,7 @@ class Simulator:
         x_deg = float(np.degrees(np.arctan(cam.p_norm[0])))
         y_deg = float(np.degrees(np.arctan(cam.p_norm[1])))
         self._fov_target_dot.set_data([x_deg], [y_deg])
+        self._fov_target_dot.set_markersize(self._fov_marker_size_for_apparent_angle(cam.p_norm, cam.range_m))
         self._fov_target_dot.set_visible(True)
 
     def update(

@@ -105,11 +105,13 @@ class CameraMeasurement:
     p_norm: normalized image coordinate (x/z, y/z) in image plane (dimensionless)
             i.e., [u/fx, v/fy] if principal point removed and fx=fy=foc in pixels
     uv_px:  pixel coordinate [u, v] in pixels (optional, for logging/debug)
+    range_m: line-of-sight distance from camera to target, meters (optional)
     valid:  whether the target is within FOV / successfully detected
     """
     t_meas: float
     p_norm: Optional[Array] = None        # shape (2,)
     uv_px: Optional[Array] = None         # shape (2,)
+    range_m: Optional[float] = None
     valid: bool = True
 
     def __post_init__(self) -> None:
@@ -119,6 +121,10 @@ class CameraMeasurement:
         if self.uv_px is not None:
             self.uv_px = _as_vec(self.uv_px, 2, "CameraMeasurement.uv_px")
             _is_finite(self.uv_px, "CameraMeasurement.uv_px")
+        if self.range_m is not None:
+            self.range_m = float(self.range_m)
+            if not np.isfinite(self.range_m):
+                raise ValueError("CameraMeasurement.range_m must be finite")
 
 
 @dataclass(slots=True)
