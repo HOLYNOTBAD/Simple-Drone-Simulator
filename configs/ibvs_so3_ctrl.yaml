@@ -30,6 +30,9 @@ visualization:
     fov_target: [181, 35, 4]
     fov_status_no_target: [181, 35, 4]
     fov_status_has_target: [0, 128, 0]
+  enable_realtime_animation: true
+  enable_offline_animation: false
+  save_cache: false
 
 termination:
   t_final: 20.0

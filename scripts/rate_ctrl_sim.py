@@ -17,6 +17,7 @@ from models.state import TargetState, UAVState
 from observe.perfect import PerfectObserver
 from sim.scheduler import MultiRateScheduler, RateConfig
 from sim.simulator import Simulator, TerminationConfig
+from utils.config import resolve_script_config
 from visualization.monitor import Monitor, MonitorConfig
 
 
@@ -35,10 +36,11 @@ def _omega_sp(t_now: float, out: np.ndarray) -> np.ndarray:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", type=str, default="configs/rate_ctrl.yaml")
+    ap.add_argument("--config", type=str, default=None)
     args = ap.parse_args()
 
-    cfg = _load_cfg(args.config)
+    config_path = resolve_script_config(__file__, args.config)
+    cfg = _load_cfg(config_path)
     seed = int(cfg.get("seed", 0))
     np.random.seed(seed)
 
@@ -56,6 +58,9 @@ def main() -> None:
     sim_viz = Simulator(
         scheduler=sch,
         enable=bool(viz_cfg.get("enable", True)),
+        enable_realtime_animation=bool(viz_cfg.get("enable_realtime_animation", True)),
+        enable_offline_animation=bool(viz_cfg.get("enable_offline_animation", False)),
+        save_cache=bool(viz_cfg.get("save_cache", False)),
         realtime=bool(viz_cfg.get("realtime", True)),
         enable_fov=False,
         trail_len=int(viz_cfg.get("trail_len", 1000)),
@@ -95,6 +100,7 @@ def main() -> None:
 
     t_final = 5.0
     term = TerminationConfig(t_final=t_final, hit_radius=0.0)
+    sim_viz.set_t_final(term.t_final)
 
     monitor = Monitor(
         scheduler=sch,
@@ -135,8 +141,11 @@ def main() -> None:
         monitor.push(name="actual", color="tab:blue", data=actual_thrust, t=uav.t, group="thrust", step=k)
         monitor.update(step=k)
 
-    monitor.close(block=True)
-    sim_viz.close(block=True)
+    if sim_viz.enable:
+        sim_viz.close(block=True)
+        monitor.close(block=False)
+    else:
+        monitor.close(block=True)
 
 
 if __name__ == "__main__":

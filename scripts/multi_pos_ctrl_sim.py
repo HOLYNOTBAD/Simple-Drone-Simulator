@@ -27,6 +27,7 @@ from models.rigid_body import RigidBody6DoF, RigidBodyParams
 from models.state import Observation, TargetState, UAVState
 from sim.scheduler import MultiRateScheduler, RateConfig
 from sim.simulator import Simulator, TerminationConfig
+from utils.config import resolve_script_config
 
 
 @dataclass(slots=True)
@@ -215,6 +216,9 @@ def _build_visualizer(cfg: dict, sch: MultiRateScheduler) -> Simulator:
     return Simulator(
         scheduler=sch,
         enable=bool(viz_cfg.get("enable", True)),
+        enable_realtime_animation=bool(viz_cfg.get("enable_realtime_animation", True)),
+        enable_offline_animation=bool(viz_cfg.get("enable_offline_animation", False)),
+        save_cache=bool(viz_cfg.get("save_cache", False)),
         realtime=bool(viz_cfg.get("realtime", True)),
         enable_fov=False,
         cam_width=640,
@@ -252,13 +256,14 @@ def _current_waypoint_index(agent: MultiUAVAgent) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", type=str, default="configs/multi_pos_ctrl.yaml")
+    ap.add_argument("--config", type=str, default=None)
     ap.add_argument("--csv", type=str, required=True, help="trajectory csv with columns: ID, X, Y, Z, timestamp_ms")
     ap.add_argument("--yaw-sp", type=float, default=None, help="override yaw setpoint for all UAVs")
     ap.add_argument("--t-final", type=float, default=None, help="override simulation horizon")
     args = ap.parse_args()
 
-    cfg = _load_cfg(args.config)
+    config_path = resolve_script_config(__file__, args.config)
+    cfg = _load_cfg(config_path)
     seed = int(cfg.get("seed", cfg.get("logging", {}).get("seed", 0)))
     np.random.seed(seed)
 
@@ -282,6 +287,7 @@ def main() -> None:
     t_final = _resolve_t_final(args.t_final, cfg, traj_map)
     hit_radius = float(cfg.get("termination", {}).get("hit_radius", 10.0))
     term = TerminationConfig(t_final=t_final, hit_radius=hit_radius)
+    sim_viz.set_t_final(term.t_final)
     steps = int(np.ceil(term.t_final / sch.dt))
 
     ############### Main simulation loop ##############

@@ -9,7 +9,7 @@ rates:
 
 visualization:
   enable: true
-  realtime: false
+  realtime: true
   enable_fov: false
   trail_len: 200
   auto_axis: false
@@ -26,10 +26,13 @@ visualization:
     uav_arrow: [204, 74, 116]
     target_traj: [252, 180, 49]
     target_dot: [235, 120, 82]
+  enable_realtime_animation: false
+  enable_offline_animation: true
+  save_cache: false
 
 
 termination:
-  t_final: 1000.0
+  t_final: 30.0
   hit_radius: 0.05
 
 # --- UAV initial state (NED / FRD) ---

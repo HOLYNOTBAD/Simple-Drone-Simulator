@@ -25,6 +25,9 @@ visualization:
     uav_arrow: [204, 74, 116]
     target_traj: [252, 180, 49]
     target_dot: [235, 120, 82]
+  enable_realtime_animation: true
+  enable_offline_animation: false
+  save_cache: false
 
 monitor:
   enable: true

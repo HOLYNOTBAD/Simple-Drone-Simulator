@@ -2,7 +2,7 @@
 
 > A modular UAV interception simulation framework for control, dynamics, sensing, and visualization experiments.
 
-# 0. Run simulation
+# 0. Run Simulation
 
 ## Python Environment
 
@@ -10,49 +10,106 @@ Recommended environment (Conda):
 
 ```bash
 # 1) Create environment
-conda create -y -n SimpleDroneSim python=3.10 numpy pyyaml matplotlib
+conda create -y -n SimpleDroneSim python=3.11 numpy pyyaml matplotlib
 
 # 2) Activate
 conda activate SimpleDroneSim
 
-# 3) (Optional) Ensure Qt backend is available for interactive visualization
+# 3) Install project in editable mode
+python -m pip install -e .
+
+# 4) Optional: install Qt backend for interactive windows
 conda install -y pyqt
 python -c "import matplotlib; print(matplotlib.get_backend())"
 ```
 
-If visualization windows do not show up:
+If the visualization window does not appear, try:
 
 ```bash
 export MPLBACKEND=QtAgg
-echo $DISPLAY
 ```
 
-Quick run check:
+## Run Rules
+
+- After `python -m pip install -e .`, you can run scripts directly from the repository root.
+- Most scripts automatically search for a same-name YAML config in [configs](configs).
+- Therefore `--config` is optional in normal usage.
+- Multi-UAV trajectory following additionally requires a CSV file.
+
+## Quick Start
 
 ```bash
-python -m scripts.ibvs_ctrl_sim --config configs/ibvs_ctrl.yaml
-python -m scripts.pos_ctrl_sim --config configs/pos_ctrl.yaml
+python scripts/ibvs_ctrl_sim.py
+python scripts/ibvs_so3_ctrl_sim.py
+python scripts/pos_ctrl_sim.py
+python scripts/rate_ctrl_sim.py
 ```
 
 ## Demos
 
-1.Simple IBVS-based Anti-UAV demo, related paper:【2020ICRA】An Autonomous Intercept Drone with Image-based Visual Servo
+### 1) IBVS interception demo
 
-```python
- python -m scripts.ibvs_ctrl_sim --config configs/ibvs_ctrl.yaml   
+Related paper: 【2020 ICRA】An Autonomous Intercept Drone with Image-based Visual Servo
+
+```bash
+python scripts/ibvs_ctrl_sim.py
 ```
 
-2.Simple IBVS-based Anti-UAV demo, related paper:【2025TCST】High-Speed Interception Multicopter Control by Image-based Visual Servoing
+Use an explicit config if needed:
 
-```python
- python -m scripts.ibvs_so3_sim --config configs/ibvs_so3_ctrl.yaml   
+```bash
+python scripts/ibvs_ctrl_sim.py --config configs/ibvs_ctrl.yaml
 ```
 
-3.Traj Following demo Using PX4-LIKE position control interface:
+![ibvs ctrl demo](image/readme/ibvs_ctrl_demo.gif)
 
-```python
-python -m scripts.pos_ctrl_sim --config configs/pos_ctrl.yaml
+### 2) High-speed IBVS-SO3 interception demo
+
+Related paper: 【2025 TCST】High-Speed Interception Muticopter Control by Image-based Visual Servoing
+
+```bash
+python scripts/ibvs_so3_ctrl_sim.py # TODO
 ```
+
+### 3) PX4-like position control demo
+
+```bash
+python scripts/pos_ctrl_sim.py
+```
+
+Optional arguments:
+
+```bash
+python scripts/pos_ctrl_sim.py --p-sp 20 10 -30 --yaw-sp 0.0 --t-final 20
+```
+
+![pos ctrl demo](image/readme/pos_ctrl_demo.gif)
+
+### 4) Rate control demo
+
+```bash
+python scripts/rate_ctrl_sim.py
+```
+
+### 5) Multi-UAV trajectory following demo
+
+```bash
+python scripts/multi_pos_ctrl_sim.py --csv configs/multi_pos_ctrl_data/multi_pos_ctrl_data.csv
+```
+
+Use an explicit config if needed:
+
+```bash
+python scripts/multi_pos_ctrl_sim.py --config configs/multi_pos_ctrl.yaml --csv configs/multi_pos_ctrl_data/multi_pos_ctrl_data.csv
+```
+
+![pos ctrl demo](image/readme/multi_pos_ctrl_demo.gif)
+
+## Visualization Notes
+
+- Real-time 3D rendering based on `matplotlib` can be slow for many UAVs or very long trajectories.
+- For smoother runs, lower `visualization_hz`, reduce `trail_len`, or disable real-time animation and use offline replay.
+- Offline replay cache is controlled by `visualization.save_cache` in the YAML config.
 
 # 1. Project Vision
 

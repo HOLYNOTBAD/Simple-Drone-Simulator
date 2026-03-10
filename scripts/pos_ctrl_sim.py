@@ -20,6 +20,7 @@ from models.state import Observation, TargetState, UAVState
 from sensors.camera import CameraExtrinsics, CameraIntrinsics, PinholeCamera
 from sim.scheduler import MultiRateScheduler, RateConfig
 from sim.simulator import Simulator, TerminationConfig
+from utils.config import resolve_script_config
 
 
 def _load_cfg(path: str) -> dict:
@@ -50,13 +51,14 @@ def _figure_eight_yaw_sp(t: float) -> float:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", type=str, default="configs/pos_ctrl.yaml")
+    ap.add_argument("--config", type=str, default=None)
     ap.add_argument("--p-sp", type=float, nargs=3, default=None, help="position setpoint in NED")
     ap.add_argument("--yaw-sp", type=float, default=None, help="yaw setpoint placeholder")
     ap.add_argument("--t-final", type=float, default=None, help="override simulation horizon")
     args = ap.parse_args()
 
-    cfg = _load_cfg(args.config)
+    config_path = resolve_script_config(__file__, args.config)
+    cfg = _load_cfg(config_path)
     seed = int(cfg.get("seed", cfg.get("logging", {}).get("seed", 0)))
     np.random.seed(seed)
 
@@ -73,6 +75,9 @@ def main() -> None:
     sim_viz = Simulator(
         scheduler=sch,
         enable=bool(viz_cfg.get("enable", True)),
+        enable_realtime_animation=bool(viz_cfg.get("enable_realtime_animation", True)),
+        enable_offline_animation=bool(viz_cfg.get("enable_offline_animation", False)),
+        save_cache=bool(viz_cfg.get("save_cache", False)),
         realtime=bool(viz_cfg.get("realtime", True)),
         enable_fov=bool(viz_cfg.get("enable_fov", True)),
         cam_width=int(cfg.get("camera", {}).get("width", 640)),
@@ -175,6 +180,7 @@ def main() -> None:
     t_final = float(args.t_final if args.t_final is not None else term_cfg.get("t_final", 20.0))
     hit_radius = float(term_cfg.get("hit_radius", 10))
     term = TerminationConfig(t_final=t_final, hit_radius=hit_radius)
+    sim_viz.set_t_final(term.t_final)
 
     steps = int(np.ceil(term.t_final / sch.dt))
     obs_p_r = np.zeros(3, dtype=float)
@@ -230,7 +236,7 @@ def main() -> None:
         "t_final": float(uav.t),
     }
 
-    print("=== Position Control Summary ===")
+    print("\n=== Position Control Summary ===")
     for k, v in summary.items():
         print(f"{k}: {v}")
 

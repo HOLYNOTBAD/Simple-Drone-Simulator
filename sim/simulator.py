@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+import pickle
 import time
 from itertools import cycle
 
@@ -39,6 +41,9 @@ class Simulator:
         self,
         scheduler: MultiRateScheduler,
         enable: bool = True,
+        t_final: float | None = None,
+        enable_realtime_animation: bool = True,
+        enable_offline_animation: bool = False,
         realtime: bool = True,
         enable_fov: bool = True,
         cam_width: int = 640,
@@ -59,9 +64,13 @@ class Simulator:
         fov_target_marker_size_min: float = 4.0,
         fov_target_marker_size_max: float = 100.0,
         fov_target_diameter_m: float = 5.0,
+        cache_dir: str | Path = "sim/cache",
+        save_cache: bool = False,
     ):
         self.sch = scheduler
         self.realtime = bool(realtime)
+        self.enable_realtime_animation = bool(enable_realtime_animation)
+        self.enable_offline_animation = bool(enable_offline_animation)
         backend_is_noninteractive = False
         if plt is not None:
             backend = str(plt.get_backend()).lower()
@@ -81,8 +90,12 @@ class Simulator:
             )
             if enable and backend_is_noninteractive:
                 print(f"[Simulator] visualization disabled: non-interactive matplotlib backend '{backend}'")
-        self.enable = bool(enable and (plt is not None) and (Poly3DCollection is not None) and (not backend_is_noninteractive))
+        runtime_available = bool(enable and (plt is not None) and (Poly3DCollection is not None) and (not backend_is_noninteractive))
+        self.enable_realtime_animation = bool(runtime_available and self.enable_realtime_animation)
+        self.enable_offline_animation = bool(runtime_available and self.enable_offline_animation)
+        self.enable = bool(runtime_available and (self.enable_realtime_animation or self.enable_offline_animation))
         self.enable_fov = bool(enable_fov)
+        self.t_final = None if t_final is None else max(float(t_final), 1e-9)
         self.cam_width = int(cam_width)
         self.cam_height = int(cam_height)
         self.cam_fx = float(cam_fx)
@@ -102,12 +115,24 @@ class Simulator:
         self.fov_target_marker_size_min = float(min(fov_target_marker_size_min, fov_target_marker_size_max))
         self.fov_target_marker_size_max = float(max(fov_target_marker_size_min, fov_target_marker_size_max))
         self.fov_target_diameter_m = max(float(fov_target_diameter_m), 1e-6)
+        self.cache_dir = Path(cache_dir)
+        self.save_cache = bool(save_cache)
 
         self._u_hist: list[np.ndarray] = []
         self._t_hist: list[np.ndarray] = []
         self._u_hists: dict[str, list[np.ndarray]] = {}
         self._t_hists: dict[str, list[np.ndarray]] = {}
         self._last_vis_wall_t: float | None = None
+        self._cache_frames: list[dict[str, object]] = []
+        self._cache_mode: str | None = None
+        self._cache_file_path: Path | None = None
+        self._cache_stream = None
+        self._rotor_circle_th = np.linspace(0.0, 2.0 * np.pi, 24, endpoint=False)
+        self._rotor_circle_cth = np.cos(self._rotor_circle_th)
+        self._rotor_circle_sth = np.sin(self._rotor_circle_th)
+        self._progress_start_wall_t: float | None = None
+        self._last_progress_pct: int = -1
+        self._progress_finished: bool = False
 
         self.fig = None
         self._layout_gs = None
@@ -141,7 +166,12 @@ class Simulator:
             ]
         )
 
-        if self.enable:
+        if self.enable and self.enable_offline_animation and self.save_cache:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            self._cache_file_path = self.cache_dir / f"sim_cache_{time.strftime('%Y%m%d_%H%M%S')}.pkl"
+            self._cache_stream = self._cache_file_path.open("wb")
+
+        if self.enable and self.enable_realtime_animation:
             plt.ion()
             self._init_canvas()
 
@@ -305,6 +335,138 @@ class Simulator:
             self.ax.set_zlim(cz - hz, cz + hz)
         self.ax.set_box_aspect((float(self.map_size[0]), float(self.map_size[1]), float(self.map_size[2])))
 
+    def set_t_final(self, t_final: float | None) -> None:
+        self.t_final = None if t_final is None else max(float(t_final), 1e-9)
+        self._progress_start_wall_t = None
+        self._last_progress_pct = -1
+        self._progress_finished = False
+
+    def _print_progress(self, sim_t: float) -> None:
+        if self.t_final is None or self._progress_finished:
+            return
+        if self._progress_start_wall_t is None:
+            self._progress_start_wall_t = time.perf_counter()
+
+        sim_t = min(max(float(sim_t), 0.0), self.t_final)
+        progress = sim_t / self.t_final
+        pct = int(progress * 100.0)
+        if pct == self._last_progress_pct:
+            return
+
+        bar_width = 30
+        filled = min(bar_width, int(progress * bar_width))
+        bar = "=" * filled + " " * (bar_width - filled)
+        wall_elapsed = time.perf_counter() - self._progress_start_wall_t
+        print(
+            f"\r[Simulator] [{bar}] {pct:3d}% | sim {sim_t:.2f}/{self.t_final:.2f}s | wall {wall_elapsed:.2f}s",
+            end="",
+            flush=True,
+        )
+        self._last_progress_pct = pct
+        if pct >= 100:
+            print(flush=True)
+            self._progress_finished = True
+
+    def _cache_frame(self, mode: str, frame: dict[str, object]) -> None:
+        if not self.enable_offline_animation:
+            return
+        if self._cache_mode is None:
+            self._cache_mode = mode
+        elif self._cache_mode != mode:
+            raise RuntimeError(f"Simulator cache mode mismatch: expected {self._cache_mode}, got {mode}")
+        self._cache_frames.append(frame)
+        if self._cache_stream is not None:
+            pickle.dump(frame, self._cache_stream)
+
+    def _cleanup_cache_file(self) -> None:
+        if self._cache_file_path is None:
+            return
+        if self.save_cache:
+            print(f"[Simulator] cached animation frames: {self._cache_file_path}")
+            return
+        try:
+            if self._cache_file_path.exists():
+                self._cache_file_path.unlink()
+                print(f"[Simulator] deleted cache: {self._cache_file_path}")
+        except OSError as exc:
+            print(f"[Simulator] failed to delete cache {self._cache_file_path}: {exc}")
+
+    def _cache_single_frame(
+        self,
+        step: int,
+        uav: UAVState,
+        tgt: TargetState,
+        cam: CameraMeasurement | None,
+        has_target: bool | None,
+    ) -> None:
+        self._cache_frame(
+            "single",
+            {
+                "step": int(step),
+                "uav": {
+                    "t": float(uav.t),
+                    "p_e": np.asarray(uav.p_e, dtype=float).copy(),
+                    "q_eb": np.asarray(uav.q_eb, dtype=float).copy(),
+                },
+                "tgt": {
+                    "t": float(tgt.t),
+                    "p_e": np.asarray(tgt.p_e, dtype=float).copy(),
+                },
+                "cam": None
+                if cam is None
+                else {
+                    "t_meas": float(cam.t_meas),
+                    "p_norm": None if cam.p_norm is None else np.asarray(cam.p_norm, dtype=float).copy(),
+                    "valid": bool(cam.valid),
+                    "range_m": None if cam.range_m is None else float(cam.range_m),
+                },
+                "has_target": None if has_target is None else bool(has_target),
+            },
+        )
+
+    def _cache_multi_frame(
+        self,
+        step: int,
+        uavs: dict[str, UAVState],
+        tgts: dict[str, TargetState] | None,
+        cam: CameraMeasurement | None,
+        has_target: bool | None,
+    ) -> None:
+        frame_uavs = {
+            key: {
+                "t": float(uav.t),
+                "p_e": np.asarray(uav.p_e, dtype=float).copy(),
+                "q_eb": np.asarray(uav.q_eb, dtype=float).copy(),
+            }
+            for key, uav in uavs.items()
+        }
+        frame_tgts = None
+        if tgts is not None:
+            frame_tgts = {
+                key: {
+                    "t": float(tgt.t),
+                    "p_e": np.asarray(tgt.p_e, dtype=float).copy(),
+                }
+                for key, tgt in tgts.items()
+            }
+        self._cache_frame(
+            "multi",
+            {
+                "step": int(step),
+                "uavs": frame_uavs,
+                "tgts": frame_tgts,
+                "cam": None
+                if cam is None
+                else {
+                    "t_meas": float(cam.t_meas),
+                    "p_norm": None if cam.p_norm is None else np.asarray(cam.p_norm, dtype=float).copy(),
+                    "valid": bool(cam.valid),
+                    "range_m": None if cam.range_m is None else float(cam.range_m),
+                },
+                "has_target": None if has_target is None else bool(has_target),
+            },
+        )
+
     def _fov_marker_size_for_apparent_angle(self, p_norm: np.ndarray | None, range_m: float | None) -> float:
         if p_norm is None or range_m is None or self.ax_fov is None or self.fig is None:
             return self.fov_target_marker_size
@@ -420,6 +582,165 @@ class Simulator:
         line.set_data([float(p0[0]), float(p1[0])], [float(p0[1]), float(p1[1])])
         line.set_3d_properties([float(p0[2]), float(p1[2])])
 
+    def _reset_visual_runtime_state(self) -> None:
+        if self.fig is not None and plt is not None:
+            plt.close(self.fig)
+        self._u_hist = []
+        self._t_hist = []
+        self._u_hists = {}
+        self._t_hists = {}
+        self._last_vis_wall_t = None
+        self.fig = None
+        self._layout_gs = None
+        self.ax = None
+        self._u_line = None
+        self._t_line = None
+        self._t_dot = None
+        self._bbox_lines = []
+        self._u_arm1 = None
+        self._u_arm2 = None
+        self._u_forward = None
+        self._u_forward_h1 = None
+        self._u_forward_h2 = None
+        self._u_rotor_disks = []
+        self.ax_fov = None
+        self._fov_target_dot = None
+        self._fov_status_text = None
+        self._multi_artists = {}
+
+    def _prepare_replay_canvas(self) -> None:
+        if not self.enable:
+            return
+        self._reset_visual_runtime_state()
+        plt.ion()
+        self._init_canvas()
+
+    def _maybe_wait_for_next_frame(self) -> None:
+        if not self.realtime:
+            return
+        vis_interval = self.sch.dt * self.sch.n_visualization
+        now = time.perf_counter()
+        if self._last_vis_wall_t is not None:
+            wait_s = vis_interval - (now - self._last_vis_wall_t)
+            if wait_s > 0.0:
+                time.sleep(wait_s)
+        self._last_vis_wall_t = time.perf_counter()
+
+    def _render_single_frame(
+        self,
+        uav: UAVState,
+        tgt: TargetState,
+        cam: CameraMeasurement | None = None,
+        has_target: bool | None = None,
+    ) -> None:
+        if self.fig is None:
+            return
+        self._maybe_wait_for_next_frame()
+        self.vis_uav(uav)
+        self.vis_target(tgt)
+        self.vis_fov(cam, has_target=has_target)
+        if self.auto_axis:
+            self._update_bounds()
+        else:
+            self._apply_fixed_bounds()
+        self._update_bbox_lines_from_axes()
+        self.ax.set_title(f"Real-time UAV/Target Visualization | t={uav.t:.2f}s")
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+        if self.enable_fov and (self.ax_fov is not None):
+            self.ax_fov.set_title(f"Camera FOV (First-person) | t={uav.t:.2f}s")
+        plt.pause(0.001)
+
+    def _render_multi_frame(
+        self,
+        uavs: dict[str, UAVState],
+        tgts: dict[str, TargetState] | None = None,
+        cam: CameraMeasurement | None = None,
+        has_target: bool | None = None,
+    ) -> None:
+        if self.fig is None or not uavs:
+            return
+        self._maybe_wait_for_next_frame()
+        for key, uav in uavs.items():
+            artists = self._get_multi_artists(key)
+            hist = self._u_hists.setdefault(key, [])
+            self._vis_uav_on_artists(uav, hist, artists)
+            if tgts is not None and key in tgts:
+                tgt_hist = self._t_hists.setdefault(key, [])
+                self._vis_target_on_artists(tgts[key], tgt_hist, artists)
+
+        self.vis_fov(cam, has_target=has_target)
+        self._trim_histories()
+        if self.auto_axis:
+            self._update_bounds()
+        else:
+            self._apply_fixed_bounds()
+        self._update_bbox_lines_from_axes()
+
+        lead_key = next(iter(uavs.keys()))
+        lead_uav = uavs[lead_key]
+        self.ax.set_title(f"Real-time Multi-UAV Visualization | count={len(uavs)} | t={lead_uav.t:.2f}s")
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+        if self.enable_fov and (self.ax_fov is not None):
+            self.ax_fov.set_title(f"Camera FOV (First-person) | t={lead_uav.t:.2f}s")
+        plt.pause(0.001)
+
+    @staticmethod
+    def _frame_to_uav(frame: dict[str, object]) -> UAVState:
+        return UAVState(
+            t=float(frame["t"]),
+            p_e=np.asarray(frame["p_e"], dtype=float),
+            v_e=np.zeros(3, dtype=float),
+            q_eb=np.asarray(frame["q_eb"], dtype=float),
+            w_b=np.zeros(3, dtype=float),
+        )
+
+    @staticmethod
+    def _frame_to_target(frame: dict[str, object]) -> TargetState:
+        return TargetState(
+            t=float(frame["t"]),
+            p_e=np.asarray(frame["p_e"], dtype=float),
+            v_e=np.zeros(3, dtype=float),
+        )
+
+    @staticmethod
+    def _frame_to_camera(frame: dict[str, object] | None) -> CameraMeasurement | None:
+        if frame is None:
+            return None
+        return CameraMeasurement(
+            t_meas=float(frame["t_meas"]),
+            p_norm=None if frame["p_norm"] is None else np.asarray(frame["p_norm"], dtype=float),
+            uv_px=None,
+            range_m=frame["range_m"],
+            valid=bool(frame["valid"]),
+        )
+
+    def _replay_cached_animation(self, block: bool = True) -> None:
+        if not self._cache_frames:
+            return
+        self._prepare_replay_canvas()
+        if self._cache_mode == "single":
+            for frame in self._cache_frames:
+                uav = self._frame_to_uav(frame["uav"])
+                tgt = self._frame_to_target(frame["tgt"])
+                cam = self._frame_to_camera(frame.get("cam"))
+                self._render_single_frame(uav=uav, tgt=tgt, cam=cam, has_target=frame.get("has_target"))
+        elif self._cache_mode == "multi":
+            for frame in self._cache_frames:
+                uavs = {key: self._frame_to_uav(uav_frame) for key, uav_frame in frame["uavs"].items()}
+                tgts = None
+                if frame.get("tgts") is not None:
+                    tgts = {key: self._frame_to_target(tgt_frame) for key, tgt_frame in frame["tgts"].items()}
+                cam = self._frame_to_camera(frame.get("cam"))
+                self._render_multi_frame(uavs=uavs, tgts=tgts, cam=cam, has_target=frame.get("has_target"))
+
+        if block:
+            plt.ioff()
+            plt.show()
+        elif self.fig is not None:
+            plt.close(self.fig)
+
     def _make_uav_artists(self, key: str) -> dict[str, object]:
         base_color = next(self._color_cycle)
         light_color = tuple(min(1.0, c * 0.75 + 0.25) for c in base_color)
@@ -505,11 +826,11 @@ class Simulator:
         rotor_r = 0.48 * arm_len
         e_x = R @ np.array([1.0, 0.0, 0.0], dtype=float)
         e_y = R @ np.array([0.0, 1.0, 0.0], dtype=float)
-        th = np.linspace(0.0, 2.0 * np.pi, 24, endpoint=False)
-        cth = np.cos(th)
-        sth = np.sin(th)
         for disk, c in zip(artists["u_rotor_disks"], rotors):
-            verts = [c + rotor_r * (cth_i * e_x + sth_i * e_y) for cth_i, sth_i in zip(cth, sth)]
+            verts = [
+                c + rotor_r * (cth_i * e_x + sth_i * e_y)
+                for cth_i, sth_i in zip(self._rotor_circle_cth, self._rotor_circle_sth)
+            ]
             disk.set_verts([verts])
 
         b_f = np.array([1.0, 0.0, 0.0], dtype=float)
@@ -568,46 +889,19 @@ class Simulator:
         cam: CameraMeasurement | None = None,
         has_target: bool | None = None,
     ) -> None:
+        if uavs:
+            lead_uav = next(iter(uavs.values()))
+            self._print_progress(lead_uav.t)
         if not self.enable:
             return
         if not self.sch.should_visualization(step):
             return
         if not uavs:
             return
-
-        if self.realtime:
-            vis_interval = self.sch.dt * self.sch.n_visualization
-            now = time.perf_counter()
-            if self._last_vis_wall_t is not None:
-                wait_s = vis_interval - (now - self._last_vis_wall_t)
-                if wait_s > 0.0:
-                    time.sleep(wait_s)
-            self._last_vis_wall_t = time.perf_counter()
-
-        for key, uav in uavs.items():
-            artists = self._get_multi_artists(key)
-            hist = self._u_hists.setdefault(key, [])
-            self._vis_uav_on_artists(uav, hist, artists)
-            if tgts is not None and key in tgts:
-                tgt_hist = self._t_hists.setdefault(key, [])
-                self._vis_target_on_artists(tgts[key], tgt_hist, artists)
-
-        self.vis_fov(cam, has_target=has_target)
-        self._trim_histories()
-        if self.auto_axis:
-            self._update_bounds()
-        else:
-            self._apply_fixed_bounds()
-        self._update_bbox_lines_from_axes()
-
-        lead_key = next(iter(uavs.keys()))
-        lead_uav = uavs[lead_key]
-        self.ax.set_title(f"Real-time Multi-UAV Visualization | count={len(uavs)} | t={lead_uav.t:.2f}s")
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
-        if self.enable_fov and (self.ax_fov is not None):
-            self.ax_fov.set_title(f"Camera FOV (First-person) | t={lead_uav.t:.2f}s")
-        plt.pause(0.001)
+        self._cache_multi_frame(step=step, uavs=uavs, tgts=tgts, cam=cam, has_target=has_target)
+        if not self.enable_realtime_animation:
+            return
+        self._render_multi_frame(uavs=uavs, tgts=tgts, cam=cam, has_target=has_target)
 
     def vis_fov(self, cam: CameraMeasurement | None, has_target: bool | None = None) -> None:
         if (not self.enable) or (not self.enable_fov) or (self._fov_target_dot is None):
@@ -634,41 +928,38 @@ class Simulator:
         cam: CameraMeasurement | None = None,
         has_target: bool | None = None,
     ) -> None:
+        self._print_progress(uav.t)
         if not self.enable:
             return
         if not self.sch.should_visualization(step):
             return
+        self._cache_single_frame(step=step, uav=uav, tgt=tgt, cam=cam, has_target=has_target)
+        if not self.enable_realtime_animation:
+            return
+        self._render_single_frame(uav=uav, tgt=tgt, cam=cam, has_target=has_target)
 
-        if self.realtime:
-            # Pace visualization to wall-clock time so users can observe the process.
-            vis_interval = self.sch.dt * self.sch.n_visualization
-            now = time.perf_counter()
-            if self._last_vis_wall_t is not None:
-                wait_s = vis_interval - (now - self._last_vis_wall_t)
-                if wait_s > 0.0:
-                    time.sleep(wait_s)
-            self._last_vis_wall_t = time.perf_counter()
-
-        self.vis_uav(uav)
-        self.vis_target(tgt)
-        self.vis_fov(cam, has_target=has_target)
-        if self.auto_axis:
-            self._update_bounds()
-        else:
-            self._apply_fixed_bounds()
-        self._update_bbox_lines_from_axes()
-        self.ax.set_title(f"Real-time UAV/Target Visualization | t={uav.t:.2f}s")
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
-        if self.enable_fov and (self.ax_fov is not None):
-            self.ax_fov.set_title(f"Camera FOV (First-person) | t={uav.t:.2f}s")
-        plt.pause(0.001)
-
-    def close(self, block: bool = True) -> None:
+    def close(self, block: bool = True, termination_reason: str | None = None) -> None:
+        if self.t_final is not None and not self._progress_finished:
+            if self._last_progress_pct >= 0:
+                print(flush=True)
+            self._progress_finished = True
+        if termination_reason is not None:
+            print(f"[Simulator] terminated by event: {termination_reason}")
         if not self.enable:
+            return
+        if self._cache_stream is not None:
+            self._cache_stream.close()
+            self._cache_stream = None
+        try:
+            if self.enable_offline_animation and self._cache_frames:
+                self._replay_cached_animation(block=block)
+                return
+        finally:
+            self._cleanup_cache_file()
+        if not self.enable_realtime_animation:
             return
         if block:
             plt.ioff()
             plt.show()
-        else:
+        elif self.fig is not None:
             plt.close(self.fig)

@@ -22,6 +22,7 @@ from sim.simulator import TerminationConfig, Simulator
 from observe.perfect import PerfectObserver
 from control.basic_control.basic_controller import BasicController
 from control.ibvs_so3_controller import IBVSSO3Controller, IBVSSO3ControllerParams
+from utils.config import resolve_script_config
 from utils.log import NPZLogger
 from utils.metrics import Metrics, MetricsConfig
 
@@ -33,10 +34,11 @@ def _load_cfg(path: str) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", type=str, default="configs/ibvs_so3_ctrl.yaml")
+    ap.add_argument("--config", type=str, default=None)
     args = ap.parse_args()
 
-    cfg = _load_cfg(args.config)
+    config_path = resolve_script_config(__file__, args.config)
+    cfg = _load_cfg(config_path)
 
     logger_cfg = cfg.get("logging", {})
     seed = int(logger_cfg.get("seed", 0))
@@ -54,6 +56,10 @@ def main():
     sim_viz = Simulator(
         scheduler=sch,
         enable=bool(viz_cfg.get("enable", True)),
+        t_final=float(cfg.get("termination", {}).get("t_final", 20.0)),
+        enable_realtime_animation=bool(viz_cfg.get("enable_realtime_animation", True)),
+        enable_offline_animation=bool(viz_cfg.get("enable_offline_animation", False)),
+        save_cache=bool(viz_cfg.get("save_cache", False)),
         realtime=bool(viz_cfg.get("realtime", True)),
         enable_fov=bool(viz_cfg.get("enable_fov", True)),
         cam_width=int(cfg["camera"].get("width", 640)),
@@ -131,6 +137,7 @@ def main():
         t_final=float(term["t_final"]),
         hit_radius=float(term["hit_radius"]),
     )
+    sim_viz.set_t_final(term_cfg.t_final)
 
     metrics = Metrics(MetricsConfig(hit_radius=term_cfg.hit_radius))
     logging_enabled = bool(logger_cfg.get("enable", True))
@@ -148,6 +155,7 @@ def main():
     last_omega = np.zeros(rb_params.num_rotors, dtype=float)
     last_cam = None
     nan2 = (np.nan, np.nan)
+    termination_reason = None
 
     steps = int(np.ceil(term_cfg.t_final / sch.dt))
     for k in range(steps):
@@ -199,10 +207,11 @@ def main():
             logger.push("motor_omega", last_omega)
 
         if metrics.hit:
+            termination_reason = "hit"
             break
 
     summary = metrics.summary()
-    meta = {"config": Path(args.config).as_posix(), "seed": seed, "summary": summary, "rates": r}
+    meta = {"config": Path(config_path).as_posix(), "seed": seed, "summary": summary, "rates": r}
     save_path = None
     if logger is not None:
         save_path = logger.save(meta=meta, filename=None if filename in (None, "null") else str(filename))
@@ -214,7 +223,7 @@ def main():
         print(f"saved: {save_path}")
     else:
         print("logging disabled: no file saved")
-    sim_viz.close(block=True)
+    sim_viz.close(block=True, termination_reason=termination_reason)
 
 
 if __name__ == "__main__":
