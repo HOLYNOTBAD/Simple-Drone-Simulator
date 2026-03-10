@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple-drone-simulator"
+version = "0.1.0"
+description = "Simple drone simulator for IBVS and control experiments"
+readme = "readme.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "PyYAML",
+  "matplotlib",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+  "control*",
+  "models*",
+  "observe*",
+  "sensors*",
+  "sim*",
+  "utils*",
+  "visualization*",
+  "csv_process*",
+]
+exclude = [
+  "runs*",
+  "pic*",
+  "image*",
+]
+namespaces = true

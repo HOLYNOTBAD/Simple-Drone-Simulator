@@ -5,7 +5,7 @@ rates:
   physics_hz: 200.0
   control_hz: 100.0
   camera_hz: 30.0
-  visualization_hz: 24.0
+  visualization_hz: 5.0
 
 visualization:
   enable: true
@@ -26,9 +26,12 @@ visualization:
     uav_arrow: [204, 74, 116]
     target_traj: [252, 180, 49]
     target_dot: [235, 120, 82]
+  enable_realtime_animation: false
+  enable_offline_animation: true
+  save_cache: false
 
 termination:
-  t_final: 1000.0
+  t_final: 60.0
 
 # --- default UAV initial state (applied to each UAV before per-ID trajectory updates) ---
 uav0:

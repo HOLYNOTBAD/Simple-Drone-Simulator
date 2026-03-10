@@ -8,7 +8,7 @@ rates:
 
 visualization:
   enable: true
-  realtime: false
+  realtime: true
   enable_fov: true
   trail_len: 200
   auto_axis: false
@@ -29,6 +29,9 @@ visualization:
     fov_target: [181, 35, 4]
     fov_status_no_target: [181, 35, 4]
     fov_status_has_target: [0, 128, 0]
+  enable_realtime_animation: false
+  enable_offline_animation: true
+  save_cache: false
 
 monitor:
   enable: true
@@ -39,7 +42,7 @@ monitor:
   x_min: 0.0
 
 termination:
-  t_final: 100.0
+  t_final: 30.0
   hit_radius: 2.0
 
 uav0:
