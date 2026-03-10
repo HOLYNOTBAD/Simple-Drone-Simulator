@@ -90,10 +90,11 @@ class PinholeCamera:
 
         # Body -> camera
         p_rel_c = self._body_to_camera(p_rel_b)
+        range_m = float(np.linalg.norm(p_rel_c))
 
         x, y, z = p_rel_c
         if z <= 1e-6:
-            return CameraMeasurement(t_meas=t_meas, valid=False, p_norm=None, uv_px=None)
+            return CameraMeasurement(t_meas=t_meas, valid=False, p_norm=None, uv_px=None, range_m=range_m)
 
         p_norm = np.array([x / z, y / z], dtype=float)
         u = self.K.fx * p_norm[0] + self.K.cx
@@ -109,6 +110,7 @@ class PinholeCamera:
                 valid=False,
                 p_norm=p_norm,
                 uv_px=np.array([u, v], dtype=float),
+                range_m=range_m,
             )
 
         return CameraMeasurement(
@@ -116,4 +118,5 @@ class PinholeCamera:
             valid=True,
             p_norm=p_norm,
             uv_px=np.array([u, v], dtype=float),
+            range_m=range_m,
         )

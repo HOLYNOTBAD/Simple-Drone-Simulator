@@ -100,17 +100,9 @@ class IBVSController(ControllerBase):
         self._monitor_step += 1
         _, theta, phi = quat_to_euler_ZYX(obs.q_eb)
 
-        if (not obs.has_target) or (obs.p_norm is None):
-            thrust = float(np.clip(self.p.mass * self.p.g / max(np.cos(theta), self.p.cos_theta_min), self.p.thrust_min, self.p.thrust_max))
-            self._push_monitor("theta", "tab:orange", theta, "angle", obs.t, monitor_step)
-            self._push_monitor("theta_d", "black", self.p.theta_th, "angle", obs.t, monitor_step)
-            self._push_monitor("theta_th", "tab:red", self.p.theta_th, "angle", obs.t, monitor_step)
-            self._push_monitor("phi", "tab:green", phi, "angle", obs.t, monitor_step)
-            return ControlCommand(t=obs.t, thrust=thrust, omega_cmd_b=np.zeros(3, dtype=float))
-
         ex = float(self.p.foc * obs.p_norm[0])
         ey = float(self.p.foc * obs.p_norm[1])
-        theta_d = float(max(self.p.theta_th, np.arctan2(-ey, self.p.foc)))
+        theta_d = float(min(self.p.theta_th, np.arctan2(-ey, self.p.foc)))
         phi_d = float(self.p.phi_d)
 
         v_rel_c = self._relative_velocity_camera(obs)
@@ -133,9 +125,7 @@ class IBVSController(ControllerBase):
         self._push_monitor("ex", "tab:blue", ex, "image_error", obs.t, monitor_step)
         self._push_monitor("ey", "tab:orange", ey, "image_error", obs.t, monitor_step)
         self._push_monitor("theta", "tab:orange", theta, "angle", obs.t, monitor_step)
-        #self._push_monitor("atan2(ey, foc)", "yellow", -np.arctan2(ey, self.p.foc), "angle", obs.t, monitor_step)
         self._push_monitor("theta_d", "black", theta_d, "angle", obs.t, monitor_step)
-        self._push_monitor("theta_th", "tab:red", self.p.theta_th, "angle", obs.t, monitor_step)
         self._push_monitor("phi", "tab:green", phi, "angle", obs.t, monitor_step)
         self._push_monitor("c_vy", "tab:purple", c_vy, "cam_vel", obs.t, monitor_step)
 
