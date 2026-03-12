@@ -17,6 +17,7 @@ from control.basic_control.velocity_controller import VelocityController, Veloci
 from models.motors import Motors
 from models.rigid_body import RigidBody6DoF, RigidBodyParams
 from models.state import Observation, TargetState, UAVState
+from observe.obj_tracker import ObjTracker, ObjTrackerParams
 from sensors.camera import CameraExtrinsics, CameraIntrinsics, PinholeCamera
 from sim.scheduler import MultiRateScheduler, RateConfig
 from sim.simulator import Simulator, TerminationConfig
@@ -94,9 +95,6 @@ def main() -> None:
         colors=viz_cfg.get("colors", {}),
         uav_visual_scale=float(viz_cfg.get("uav_visual_scale", 1.0)),
         target_marker_size=float(viz_cfg.get("target_marker_size", 6.0)),
-        fov_target_marker_size=float(viz_cfg.get("fov_target_marker_size", 7.0)),
-        fov_target_marker_size_min=float(viz_cfg.get("fov_target_marker_size_min", 4.0)),
-        fov_target_marker_size_max=float(viz_cfg.get("fov_target_marker_size_max", 18.0)),
         fov_target_diameter_m=float(viz_cfg.get("fov_target_diameter_m", 1.0)),
     )
 
@@ -139,6 +137,20 @@ def main() -> None:
         CameraExtrinsics(
             mount_pitch_deg=float(cam_cfg.get("mount_pitch_deg", 20.0)),
         ),
+    )
+    target_size_m = float(
+        cfg.get("target", {}).get(
+            "diameter_m",
+            viz_cfg.get("fov_target_diameter_m", 1.0),
+        )
+    )
+    tracker = ObjTracker(
+        ObjTrackerParams(
+            fx=float(cam_cfg.get("fx", 320.0)),
+            fy=float(cam_cfg.get("fy", 320.0)),
+            target_width_m=target_size_m,
+            target_height_m=target_size_m,
+        )
     )
 
     pos_cfg = cfg.get("position_controller", {})
@@ -197,6 +209,7 @@ def main() -> None:
     )
     err_norm = float(np.linalg.norm(obs_p_r))
     last_cam = None
+    last_bbox = None
 
     ############### Main simulation loop ##############
 
@@ -208,6 +221,7 @@ def main() -> None:
         np.copyto(tgt.p_e, p_sp_e)
         if sch.should_camera(k):
             last_cam = camera.measure(uav, tgt, t_meas=uav.t)
+            last_bbox = tracker.track(last_cam) if last_cam is not None else None
         obs.t = uav.t
         obs.q_eb = uav.q_eb
         obs.w_b = uav.w_b
@@ -221,7 +235,14 @@ def main() -> None:
 
         tgt.t = uav.t
         np.copyto(tgt.p_e, p_sp_e)
-        sim_viz.update(step=k, uav=uav, tgt=tgt, cam=last_cam, has_target=(last_cam.valid if last_cam is not None else False))
+        sim_viz.update(
+            step=k,
+            uav=uav,
+            tgt=tgt,
+            cam=last_cam,
+            bbox=last_bbox,
+            has_target=(last_cam.valid if last_cam is not None else False),
+        )
 
         np.subtract(uav.p_e, p_sp_e, out=obs_p_r)
         err_norm = float(np.linalg.norm(obs_p_r))

@@ -5,10 +5,19 @@ from pathlib import Path
 import pickle
 import time
 from itertools import cycle
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from models.state import UAVState, TargetState, CameraMeasurement
+
+if TYPE_CHECKING:
+    from observe.obj_tracker import Bbox
+
+try:
+    from observe.obj_tracker import Bbox as _RuntimeBbox
+except Exception:  # pragma: no cover
+    _RuntimeBbox = None
 from sim.scheduler import MultiRateScheduler
 from utils.math3d import quat_to_R
 
@@ -60,9 +69,6 @@ class Simulator:
         colors: dict | None = None,
         uav_visual_scale: float = 1.0,
         target_marker_size: float = 6.0,
-        fov_target_marker_size: float = 7.0,
-        fov_target_marker_size_min: float = 4.0,
-        fov_target_marker_size_max: float = 100.0,
         fov_target_diameter_m: float = 5.0,
         cache_dir: str | Path = "sim/cache",
         save_cache: bool = False,
@@ -111,9 +117,6 @@ class Simulator:
         self.colors = self._build_colors(colors or {})
         self.uav_visual_scale = float(uav_visual_scale)
         self.target_marker_size = float(target_marker_size)
-        self.fov_target_marker_size = float(fov_target_marker_size)
-        self.fov_target_marker_size_min = float(min(fov_target_marker_size_min, fov_target_marker_size_max))
-        self.fov_target_marker_size_max = float(max(fov_target_marker_size_min, fov_target_marker_size_max))
         self.fov_target_diameter_m = max(float(fov_target_diameter_m), 1e-6)
         self.cache_dir = Path(cache_dir)
         self.save_cache = bool(save_cache)
@@ -149,6 +152,7 @@ class Simulator:
         self._u_rotor_disks = []
         self.ax_fov = None
         self._fov_target_dot = None
+        self._fov_bbox_lines = []
         self._fov_status_text = None
         self._multi_artists: dict[str, dict[str, object]] = {}
         self._color_cycle = cycle(
@@ -307,11 +311,16 @@ class Simulator:
             [],
             [],
             marker="o",
-            markersize=self.fov_target_marker_size,
+            markersize=0.0,
             color=self.colors["target_dot"],
             linestyle="None",
         )
         self._fov_target_dot.set_visible(False)
+        self._fov_bbox_lines = []
+        for _ in range(4):
+            (line,) = self.ax_fov.plot([], [], color="red", lw=1.4, linestyle="-", zorder=5)
+            line.set_visible(False)
+            self._fov_bbox_lines.append(line)
         self._fov_status_text = self.ax_fov.text(
             0.02,
             0.98,
@@ -328,7 +337,9 @@ class Simulator:
         hx, hy, hz = 0.5 * self.map_size
         cx, cy, cz = self.map_center
         self.ax.set_xlim(cx - hx, cx + hx)
-        self.ax.set_ylim(cy - hy, cy + hy)
+        # Mirror Y on screen so the displayed NED frame keeps the expected
+        # right-handed visual orientation together with the inverted Down axis.
+        self.ax.set_ylim(cy + hy, cy - hy)
         if self.ned_axes:
             self.ax.set_zlim(cz + hz, cz - hz)  # invert for NED "Down positive"
         else:
@@ -397,6 +408,7 @@ class Simulator:
         uav: UAVState,
         tgt: TargetState,
         cam: CameraMeasurement | None,
+        bbox: Bbox | None,
         has_target: bool | None,
     ) -> None:
         self._cache_frame(
@@ -420,6 +432,14 @@ class Simulator:
                     "valid": bool(cam.valid),
                     "range_m": None if cam.range_m is None else float(cam.range_m),
                 },
+                "bbox": None
+                if bbox is None
+                else {
+                    "u": float(bbox.u),
+                    "v": float(bbox.v),
+                    "bw": float(bbox.bw),
+                    "bh": float(bbox.bh),
+                },
                 "has_target": None if has_target is None else bool(has_target),
             },
         )
@@ -430,6 +450,7 @@ class Simulator:
         uavs: dict[str, UAVState],
         tgts: dict[str, TargetState] | None,
         cam: CameraMeasurement | None,
+        bbox: Bbox | None,
         has_target: bool | None,
     ) -> None:
         frame_uavs = {
@@ -463,27 +484,39 @@ class Simulator:
                     "valid": bool(cam.valid),
                     "range_m": None if cam.range_m is None else float(cam.range_m),
                 },
+                "bbox": None
+                if bbox is None
+                else {
+                    "u": float(bbox.u),
+                    "v": float(bbox.v),
+                    "bw": float(bbox.bw),
+                    "bh": float(bbox.bh),
+                },
                 "has_target": None if has_target is None else bool(has_target),
             },
         )
 
     def _fov_marker_size_for_apparent_angle(self, p_norm: np.ndarray | None, range_m: float | None) -> float:
         if p_norm is None or range_m is None or self.ax_fov is None or self.fig is None:
-            return self.fov_target_marker_size
+            return 0.0
         range_safe = max(float(range_m), 1e-6)
         p_norm = np.asarray(p_norm, dtype=float).reshape(2)
         x_norm = float(p_norm[0])
         y_norm = float(p_norm[1])
-        depth_m = range_safe / np.sqrt(1.0 + x_norm * x_norm + y_norm * y_norm)
-        depth_m = max(float(depth_m), 1e-6)
-        radius_norm = 0.5 * self.fov_target_diameter_m / depth_m
 
-        x_left_deg = float(np.degrees(np.arctan(x_norm - radius_norm)))
-        x_right_deg = float(np.degrees(np.arctan(x_norm + radius_norm)))
-        y_bottom_deg = float(np.degrees(np.arctan(y_norm - radius_norm)))
-        y_top_deg = float(np.degrees(np.arctan(y_norm + radius_norm)))
-        x_center_deg = float(np.degrees(np.arctan(x_norm)))
+        # Apparent angular size is modeled from physical target size and LOS
+        # distance only, intentionally ignoring optical distortion effects.
+        # half-angle ≈ atan((D/2) / R)
+        radius_deg = float(np.degrees(np.arctan(0.5 * self.fov_target_diameter_m / range_safe)))
+
+        # Display convention for the FOV panel matches image-view left/right,
+        # so horizontal angle is mirrored relative to the camera-frame x sign.
+        x_center_deg = float(-np.degrees(np.arctan(x_norm)))
         y_center_deg = float(np.degrees(np.arctan(y_norm)))
+        x_left_deg = x_center_deg - radius_deg
+        x_right_deg = x_center_deg + radius_deg
+        y_bottom_deg = y_center_deg - radius_deg
+        y_top_deg = y_center_deg + radius_deg
 
         p_left = self.ax_fov.transData.transform((x_left_deg, y_center_deg))
         p_right = self.ax_fov.transData.transform((x_right_deg, y_center_deg))
@@ -494,9 +527,52 @@ class Simulator:
             abs(float(p_top[1] - p_bottom[1])),
         )
         if diameter_px <= 1e-9:
-            return self.fov_target_marker_size
+            return 0.0
         diameter_pt = diameter_px * 72.0 / float(self.fig.dpi)
-        return float(np.clip(diameter_pt, self.fov_target_marker_size_min, self.fov_target_marker_size_max))
+        return max(float(diameter_pt), 0.0)
+
+    def _pixel_to_fov_deg(self, u_px: float, v_px: float) -> tuple[float, float]:
+        x_norm = (float(u_px) - self.cam_cx) / max(self.cam_fx, 1e-9)
+        y_norm = (float(v_px) - self.cam_cy) / max(self.cam_fy, 1e-9)
+        x_deg = float(-np.degrees(np.arctan(x_norm)))
+        y_deg = float(np.degrees(np.arctan(y_norm)))
+        return x_deg, y_deg
+
+    def _hide_fov_bbox(self) -> None:
+        for line in self._fov_bbox_lines:
+            line.set_visible(False)
+
+    def _draw_fov_bbox(self, bbox: Bbox | None) -> None:
+        if self.ax_fov is None or not self._fov_bbox_lines or bbox is None:
+            self._hide_fov_bbox()
+            return
+
+        u = float(getattr(bbox, "u"))
+        v = float(getattr(bbox, "v"))
+        bw = max(float(getattr(bbox, "bw")), 0.0)
+        bh = max(float(getattr(bbox, "bh")), 0.0)
+        if bw <= 0.0 or bh <= 0.0:
+            self._hide_fov_bbox()
+            return
+
+        u_left = u - 0.5 * bw
+        u_right = u + 0.5 * bw
+        v_top = v - 0.5 * bh
+        v_bottom = v + 0.5 * bh
+
+        x_left_deg, y_top_deg = self._pixel_to_fov_deg(u_left, v_top)
+        x_right_deg, _ = self._pixel_to_fov_deg(u_right, v_top)
+        _, y_bottom_deg = self._pixel_to_fov_deg(u_left, v_bottom)
+
+        segments = [
+            ([x_left_deg, x_right_deg], [y_top_deg, y_top_deg]),
+            ([x_right_deg, x_right_deg], [y_top_deg, y_bottom_deg]),
+            ([x_right_deg, x_left_deg], [y_bottom_deg, y_bottom_deg]),
+            ([x_left_deg, x_left_deg], [y_bottom_deg, y_top_deg]),
+        ]
+        for line, (xs, ys) in zip(self._fov_bbox_lines, segments):
+            line.set_data(xs, ys)
+            line.set_visible(True)
 
     def _init_bbox_lines(self) -> None:
         # 12 edges of a box (wireframe only)
@@ -570,7 +646,7 @@ class Simulator:
         pads = 0.05 * spans
 
         self.ax.set_xlim(mins[0] - pads[0], maxs[0] + pads[0])
-        self.ax.set_ylim(mins[1] - pads[1], maxs[1] + pads[1])
+        self.ax.set_ylim(maxs[1] + pads[1], mins[1] - pads[1])
         if self.ned_axes:
             self.ax.set_zlim(maxs[2] + pads[2], mins[2] - pads[2])
         else:
@@ -605,6 +681,7 @@ class Simulator:
         self._u_rotor_disks = []
         self.ax_fov = None
         self._fov_target_dot = None
+        self._fov_bbox_lines = []
         self._fov_status_text = None
         self._multi_artists = {}
 
@@ -631,6 +708,7 @@ class Simulator:
         uav: UAVState,
         tgt: TargetState,
         cam: CameraMeasurement | None = None,
+        bbox: Bbox | None = None,
         has_target: bool | None = None,
     ) -> None:
         if self.fig is None:
@@ -638,7 +716,7 @@ class Simulator:
         self._maybe_wait_for_next_frame()
         self.vis_uav(uav)
         self.vis_target(tgt)
-        self.vis_fov(cam, has_target=has_target)
+        self.vis_fov(cam, bbox=bbox, has_target=has_target)
         if self.auto_axis:
             self._update_bounds()
         else:
@@ -656,6 +734,7 @@ class Simulator:
         uavs: dict[str, UAVState],
         tgts: dict[str, TargetState] | None = None,
         cam: CameraMeasurement | None = None,
+        bbox: Bbox | None = None,
         has_target: bool | None = None,
     ) -> None:
         if self.fig is None or not uavs:
@@ -669,7 +748,7 @@ class Simulator:
                 tgt_hist = self._t_hists.setdefault(key, [])
                 self._vis_target_on_artists(tgts[key], tgt_hist, artists)
 
-        self.vis_fov(cam, has_target=has_target)
+        self.vis_fov(cam, bbox=bbox, has_target=has_target)
         self._trim_histories()
         if self.auto_axis:
             self._update_bounds()
@@ -716,6 +795,17 @@ class Simulator:
             valid=bool(frame["valid"]),
         )
 
+    @staticmethod
+    def _frame_to_bbox(frame: dict[str, object] | None) -> Bbox | None:
+        if frame is None or _RuntimeBbox is None:
+            return None
+        return _RuntimeBbox(
+            u=float(frame["u"]),
+            v=float(frame["v"]),
+            bw=float(frame["bw"]),
+            bh=float(frame["bh"]),
+        )
+
     def _replay_cached_animation(self, block: bool = True) -> None:
         if not self._cache_frames:
             return
@@ -725,7 +815,8 @@ class Simulator:
                 uav = self._frame_to_uav(frame["uav"])
                 tgt = self._frame_to_target(frame["tgt"])
                 cam = self._frame_to_camera(frame.get("cam"))
-                self._render_single_frame(uav=uav, tgt=tgt, cam=cam, has_target=frame.get("has_target"))
+                bbox = self._frame_to_bbox(frame.get("bbox"))
+                self._render_single_frame(uav=uav, tgt=tgt, cam=cam, bbox=bbox, has_target=frame.get("has_target"))
         elif self._cache_mode == "multi":
             for frame in self._cache_frames:
                 uavs = {key: self._frame_to_uav(uav_frame) for key, uav_frame in frame["uavs"].items()}
@@ -733,7 +824,8 @@ class Simulator:
                 if frame.get("tgts") is not None:
                     tgts = {key: self._frame_to_target(tgt_frame) for key, tgt_frame in frame["tgts"].items()}
                 cam = self._frame_to_camera(frame.get("cam"))
-                self._render_multi_frame(uavs=uavs, tgts=tgts, cam=cam, has_target=frame.get("has_target"))
+                bbox = self._frame_to_bbox(frame.get("bbox"))
+                self._render_multi_frame(uavs=uavs, tgts=tgts, cam=cam, bbox=bbox, has_target=frame.get("has_target"))
 
         if block:
             plt.ioff()
@@ -887,6 +979,7 @@ class Simulator:
         uavs: dict[str, UAVState],
         tgts: dict[str, TargetState] | None = None,
         cam: CameraMeasurement | None = None,
+        bbox: Bbox | None = None,
         has_target: bool | None = None,
     ) -> None:
         if uavs:
@@ -898,12 +991,12 @@ class Simulator:
             return
         if not uavs:
             return
-        self._cache_multi_frame(step=step, uavs=uavs, tgts=tgts, cam=cam, has_target=has_target)
+        self._cache_multi_frame(step=step, uavs=uavs, tgts=tgts, cam=cam, bbox=bbox, has_target=has_target)
         if not self.enable_realtime_animation:
             return
-        self._render_multi_frame(uavs=uavs, tgts=tgts, cam=cam, has_target=has_target)
+        self._render_multi_frame(uavs=uavs, tgts=tgts, cam=cam, bbox=bbox, has_target=has_target)
 
-    def vis_fov(self, cam: CameraMeasurement | None, has_target: bool | None = None) -> None:
+    def vis_fov(self, cam: CameraMeasurement | None, bbox: Bbox | None = None, has_target: bool | None = None) -> None:
         if (not self.enable) or (not self.enable_fov) or (self._fov_target_dot is None):
             return
         if self._fov_status_text is not None:
@@ -912,13 +1005,18 @@ class Simulator:
             self._fov_status_text.set_color(self.colors["fov_status_has_target"] if status else self.colors["fov_status_no_target"])
         if cam is None or (cam.p_norm is None):
             self._fov_target_dot.set_visible(False)
+            self._hide_fov_bbox()
             return
 
-        x_deg = float(np.degrees(np.arctan(cam.p_norm[0])))
-        y_deg = float(np.degrees(np.arctan(cam.p_norm[1])))
+        if cam.uv_px is not None:
+            x_deg, y_deg = self._pixel_to_fov_deg(float(cam.uv_px[0]), float(cam.uv_px[1]))
+        else:
+            x_deg = float(-np.degrees(np.arctan(cam.p_norm[0])))
+            y_deg = float(np.degrees(np.arctan(cam.p_norm[1])))
         self._fov_target_dot.set_data([x_deg], [y_deg])
         self._fov_target_dot.set_markersize(self._fov_marker_size_for_apparent_angle(cam.p_norm, cam.range_m))
         self._fov_target_dot.set_visible(True)
+        self._draw_fov_bbox(bbox)
 
     def update(
         self,
@@ -926,6 +1024,7 @@ class Simulator:
         uav: UAVState,
         tgt: TargetState,
         cam: CameraMeasurement | None = None,
+        bbox: Bbox | None = None,
         has_target: bool | None = None,
     ) -> None:
         self._print_progress(uav.t)
@@ -933,10 +1032,10 @@ class Simulator:
             return
         if not self.sch.should_visualization(step):
             return
-        self._cache_single_frame(step=step, uav=uav, tgt=tgt, cam=cam, has_target=has_target)
+        self._cache_single_frame(step=step, uav=uav, tgt=tgt, cam=cam, bbox=bbox, has_target=has_target)
         if not self.enable_realtime_animation:
             return
-        self._render_single_frame(uav=uav, tgt=tgt, cam=cam, has_target=has_target)
+        self._render_single_frame(uav=uav, tgt=tgt, cam=cam, bbox=bbox, has_target=has_target)
 
     def close(self, block: bool = True, termination_reason: str | None = None) -> None:
         if self.t_final is not None and not self._progress_finished:

@@ -10,13 +10,12 @@ rates:
 visualization:
   enable: true
   realtime: true
-  enable_fov: false
+  enable_fov: true
   trail_len: 200
   auto_axis: false
   ned_axes: true
   uav_visual_scale: 2.0
   target_marker_size: 6.0
-  fov_target_marker_size: 7.0
   map_center: [0.0, 0.0, 0.0]
   map_size: [120.0, 80.0, 60.0]
   colors:

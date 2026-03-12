@@ -1,10 +1,9 @@
-# scripts/ibvs_ctrl_sim.py
+# scripts/vpn_acc_ctrl_sim.py
 from __future__ import annotations
 
 from pathlib import Path
 from dataclasses import fields
 import argparse
-import time
 import numpy as np
 
 try:
@@ -21,8 +20,9 @@ from sim.scheduler import RateConfig, MultiRateScheduler
 from sim.simulator import TerminationConfig, Simulator
 
 from observe.perfect import PerfectObserver
+from observe.obj_tracker import ObjTracker, ObjTrackerParams
 from control.basic_control.basic_controller import BasicController
-from control.ibvs_controller import IBVSController, IBVSControllerParams
+from control.vpn_acc_controller import VpnAccController, VpnAccControllerParams
 from utils.config import resolve_script_config
 from utils.log import NPZLogger
 from utils.metrics import Metrics, MetricsConfig
@@ -34,9 +34,7 @@ def _load_cfg(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-def main():
-
-    
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", type=str, default=None)
     args = ap.parse_args()
@@ -45,12 +43,9 @@ def main():
     cfg = _load_cfg(config_path)
 
     logger_cfg = cfg.get("logging", {})
-
-    # Seed
     seed = int(logger_cfg.get("seed", 0))
     np.random.seed(seed)
 
-    # Scheduler
     r = cfg["rates"]
     rates = RateConfig(
         physics_hz=float(r["physics_hz"]),
@@ -59,6 +54,7 @@ def main():
         visualization_hz=float(r.get("visualization_hz", 10.0)),
     )
     sch = MultiRateScheduler(rates)
+
     viz_cfg = cfg.get("visualization", {})
     mon_cfg = cfg.get("monitor", {})
     sim_viz = Simulator(
@@ -87,7 +83,6 @@ def main():
         fov_target_diameter_m=float(viz_cfg.get("fov_target_diameter_m", 1.0)),
     )
 
-    # Initial states
     u0 = cfg["uav0"]
     t0 = cfg["tgt0"]
     uav0 = UAVState(
@@ -103,7 +98,6 @@ def main():
         v_e=np.array(t0["v_e"], dtype=float),
     )
 
-    # Models
     rb = cfg["rigid_body"]
     rb_params = RigidBodyParams.from_yaml(rb["params_yaml"])
     uav_model = RigidBody6DoF(rb_params)
@@ -112,9 +106,9 @@ def main():
 
     tg = cfg.get("target", {})
     accel = tg.get("accel_e", None)
+    target_diameter_m = float(tg.get("diameter_m", viz_cfg.get("fov_target_diameter_m", 1.0)))
     tgt_model = TargetPointMass(TargetParams(accel_e=None if accel is None else np.array(accel, dtype=float)))
 
-    # Camera
     cam = cfg["camera"]
     K = CameraIntrinsics(
         fx=float(cam["fx"]),
@@ -130,20 +124,24 @@ def main():
             mount_pitch_deg=float(cam.get("mount_pitch_deg", 20.0)),
         ),
     )
-
-    # Observer 
     observer = PerfectObserver()
+    tracker = ObjTracker(
+        ObjTrackerParams(
+            fx=K.fx,
+            fy=K.fy,
+            target_width_m=target_diameter_m,
+            target_height_m=target_diameter_m,
+        )
+    )
 
-    # Controller
     cc = cfg["controller"]
-    ctrl_allowed = {f.name for f in fields(IBVSControllerParams)}
+    ctrl_allowed = {f.name for f in fields(VpnAccControllerParams)}
     ctrl_kwargs = {k: cc[k] for k in cc if k in ctrl_allowed}
-    ctrl_params = IBVSControllerParams(**ctrl_kwargs)
-    controller = IBVSController(ctrl_params)
+    ctrl_params = VpnAccControllerParams(**ctrl_kwargs)
+    controller = VpnAccController(ctrl_params)
     basic_ctrl.reset()
     motors.reset()
 
-    # Termination / metrics / logger
     term = cfg["termination"]
     term_cfg = TerminationConfig(
         t_final=float(term["t_final"]),
@@ -157,7 +155,7 @@ def main():
             realtime=bool(mon_cfg.get("realtime", True)),
             max_points=mon_cfg.get("max_points", None),
             step_stride=int(mon_cfg.get("step_stride", 1)),
-            title=str(mon_cfg.get("title", "IBVS Controller Monitor")),
+            title=str(mon_cfg.get("title", "VPN Acceleration Controller Monitor")),
             x_min=float(mon_cfg.get("x_min", 0.0)),
             x_max=float(mon_cfg.get("x_max", term_cfg.t_final)),
         ),
@@ -169,7 +167,6 @@ def main():
     logger = NPZLogger(run_dir=str(logger_cfg.get("run_dir", "runs"))) if logging_enabled else None
     filename = logger_cfg.get("filename", None)
 
-    # --- Run loop (explicit here, using scheduler and modules) ---
     uav = uav0
     tgt = tgt0
     last_cmd = ControlCommand(
@@ -180,31 +177,31 @@ def main():
     last_i_cmd = np.zeros(rb_params.num_rotors, dtype=float)
     last_omega = np.zeros(rb_params.num_rotors, dtype=float)
     last_cam = camera.measure(uav, tgt, t_meas=uav.t)
+    last_bbox = tracker.track(last_cam) if last_cam is not None else None
     initial_obs = observer.make_observation(t_now=uav.t, uav=uav, cam=last_cam, tgt=tgt)
-    nan2 = (np.nan, np.nan)
     termination_reason = None
+    nan2 = (np.nan, np.nan)
 
-    sim_viz.update(step=0, uav=uav, tgt=tgt, cam=last_cam, has_target=initial_obs.has_target)
+    sim_viz.update(step=0, uav=uav, tgt=tgt, cam=last_cam, bbox=last_bbox, has_target=initial_obs.has_target)
 
     steps = int(np.ceil(term_cfg.t_final / sch.dt))
     for k in range(steps):
         t_now = uav.t
 
-        # camera
         if sch.should_camera(k):
             last_cam = camera.measure(uav, tgt, t_meas=t_now)
+            last_bbox = tracker.track(last_cam) if last_cam is not None else None
 
-        # observation (perfect self-state)
         obs = observer.make_observation(t_now=t_now, uav=uav, cam=last_cam, tgt=tgt)
 
-        # control
         if sch.should_control(k):
-            cmd = controller.compute(obs)
+            bbox_width_px = None if last_bbox is None else float(last_bbox.bw)
+            cmd = controller.compute_with_bbox(obs, bbox_width_px=bbox_width_px)
             last_cmd = cmd
         else:
             cmd = last_cmd
+            bbox_width_px = None if last_bbox is None else float(last_bbox.bw)
 
-        # low-level control + motors + physics
         force_sp, motor_cmd = basic_ctrl.step_from_command(uav, cmd, sch.dt)
         motor_out = motors.step(motor_cmd.motor_current_cmd, sch.dt)
 
@@ -212,21 +209,24 @@ def main():
         tgt = tgt_model.step(tgt, sch.dt)
         last_i_cmd = motor_out.i_cmd
         last_omega = motor_out.omega
-        sim_viz.update(step=k, uav=uav, tgt=tgt, cam=last_cam, has_target=obs.has_target)
+        sim_viz.update(step=k, uav=uav, tgt=tgt, cam=last_cam, bbox=last_bbox, has_target=obs.has_target)
+
         actual_thrust = float(-motor_out.force_b[2])
+        if bbox_width_px is not None:
+            monitor.push(name="bbox_width_px", color="tab:brown", data=bbox_width_px, t=t_now, group="vpn_bbox", step=k)
+        if last_bbox is not None:
+            monitor.push(name="bbox_height_px", color="tab:pink", data=last_bbox.bh, t=t_now, group="vpn_bbox", step=k)
         monitor.push(name="cmd_thrust", color="tab:red", data=force_sp.thrust_sp, t=t_now, group="command", step=k)
         monitor.push(name="actual_thrust", color="tab:blue", data=actual_thrust, t=t_now, group="command", step=k)
         monitor.push(name="cmd_x", color="tab:red", data=cmd.omega_cmd_b[0], t=t_now, group="omega_cmd", step=k)
-        monitor.push(name="cmd_y", color="tab:red", data=cmd.omega_cmd_b[1], t=t_now, group="omega_cmd", step=k)
-        monitor.push(name="cmd_z", color="tab:red", data=cmd.omega_cmd_b[2], t=t_now, group="omega_cmd", step=k)
+        monitor.push(name="cmd_y", color="tab:orange", data=cmd.omega_cmd_b[1], t=t_now, group="omega_cmd", step=k)
+        monitor.push(name="cmd_z", color="tab:green", data=cmd.omega_cmd_b[2], t=t_now, group="omega_cmd", step=k)
         monitor.push(name="actual_x", color="tab:blue", data=uav.w_b[0], t=t_now, group="omega_cmd", step=k)
         monitor.push(name="actual_y", color="tab:cyan", data=uav.w_b[1], t=t_now, group="omega_cmd", step=k)
-        monitor.push(name="actual_z", color="tab:green", data=uav.w_b[2], t=t_now, group="omega_cmd", step=k)
+        monitor.push(name="actual_z", color="tab:purple", data=uav.w_b[2], t=t_now, group="omega_cmd", step=k)
         monitor.update(step=k)
 
-        # metrics + logging
         dist = metrics.update(t=t_now, uav_p=uav.p_e, tgt_p=tgt.p_e)
-
         if logger is not None:
             logger.push("t", t_now)
             logger.push("uav_p", uav.p_e)
@@ -236,22 +236,17 @@ def main():
             logger.push("tgt_p", tgt.p_e)
             logger.push("tgt_v", tgt.v_e)
             logger.push("dist", dist)
-
+            logger.push("bbox_width_px", np.nan if bbox_width_px is None else bbox_width_px)
+            logger.push("bbox_height_px", np.nan if last_bbox is None else last_bbox.bh)
+            logger.push("bbox_center_uv", nan2 if last_bbox is None else np.array([last_bbox.u, last_bbox.v], dtype=float))
             if last_cam is None:
                 logger.push("cam_valid", False)
                 logger.push("cam_p_norm", nan2)
                 logger.push("cam_uv", nan2)
             else:
                 logger.push("cam_valid", bool(last_cam.valid))
-                if last_cam.p_norm is None:
-                    logger.push("cam_p_norm", nan2)
-                else:
-                    logger.push("cam_p_norm", last_cam.p_norm)
-                if last_cam.uv_px is None:
-                    logger.push("cam_uv", nan2)
-                else:
-                    logger.push("cam_uv", last_cam.uv_px)
-
+                logger.push("cam_p_norm", nan2 if last_cam.p_norm is None else last_cam.p_norm)
+                logger.push("cam_uv", nan2 if last_cam.uv_px is None else last_cam.uv_px)
             logger.push("cmd_thrust", cmd.thrust)
             logger.push("cmd_omega", cmd.omega_cmd_b)
             logger.push("force_sp_thrust", force_sp.thrust_sp)
@@ -265,28 +260,19 @@ def main():
             break
 
     summary = metrics.summary()
-    meta = {
-        "config": Path(config_path).as_posix(),
-        "seed": seed,
-        "summary": summary,
-        "rates": r,
-    }
+    meta = {"config": Path(config_path).as_posix(), "seed": seed, "summary": summary, "rates": r}
     save_path = None
     if logger is not None:
         save_path = logger.save(meta=meta, filename=None if filename in (None, "null") else str(filename))
 
-    print("\n=== Simulation Summary ===")
-    for k, v in summary.items():
-        print(f"{k}: {v}")
+    print("=== VPN Acceleration Run Summary ===")
+    for key, value in summary.items():
+        print(f"{key}: {value}")
     if save_path is not None:
         print(f"saved: {save_path}")
     else:
         print("logging disabled: no file saved")
-    if sim_viz.enable:
-        sim_viz.close(block=True, termination_reason=termination_reason)
-        monitor.close(block=False)
-    else:
-        monitor.close(block=True)
+    sim_viz.close(block=True, termination_reason=termination_reason)
 
 
 if __name__ == "__main__":
