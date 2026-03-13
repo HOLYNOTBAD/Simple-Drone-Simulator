@@ -43,7 +43,6 @@ python scripts/ibvs_ctrl_sim.py
 python scripts/ibvs_so3_ctrl_sim.py
 python scripts/pos_ctrl_sim.py
 python scripts/rate_ctrl_sim.py
-python scripts/vpn_acc_ctrl_sim.py
 ```
 
 ## Demos
@@ -92,15 +91,7 @@ python scripts/pos_ctrl_sim.py --p-sp 20 10 -30 --yaw-sp 0.0 --t-final 20
 python scripts/rate_ctrl_sim.py
 ```
 
-### 5) VPN Acceleration interception demo
-
-```bash
-python scripts/vpn_acc_ctrl_sim.py
-```
-
-![vpn_acc ctrl demo](image/readme/vpn_acc_ctrl_demo.gif)
-
-### 6) Multi-UAV trajectory following demo
+### 5) Multi-UAV trajectory following demo
 
 ```bash
 python scripts/multi_pos_ctrl_sim.py --csv configs/multi_pos_ctrl_data/multi_pos_ctrl_data.csv
@@ -152,11 +143,9 @@ We currently focus on building a practical baseline with a clear path for extens
 * Observation pipeline
   * Perfect self-state access
   * Relative position / velocity generation
-  * Geometry-based object tracker (`ObjTracker`) producing `Bbox(u, v, bw, bh)`
 * Control stack
   * Task-level IBVS / interception controller
-  * VPN (Velocity-Pursuit + Proportional-Navigation) acceleration controller
-  * PX4-like cascaded basic control: Position → Velocity → Acceleration → Attitude → Rate → Force → Motor
+  * PX4-like cascaded basic control stack in progress
 * Multi-rate scheduler
   * Physics integration
   * Control loop
@@ -233,10 +222,9 @@ control/
 ├── controller_base.py
 ├── ibvs_so3_controller.py      # Current task-level IBVS controller
 ├── basic_control/
-│   ├── setpoints.py            # Position/Velocity/Acceleration/Attitude/Rate setpoints
+│   ├── setpoints.py            # Position/Velocity/Attitude/Rate setpoints
 │   ├── position_controller.py  # Position -> Velocity
-│   ├── velocity_controller.py  # Velocity -> Acceleration
-│   ├── acceleration_controller.py # Acceleration -> Attitude + Thrust
+│   ├── velocity_controller.py  # Velocity -> Attitude + Thrust
 │   ├── attitude_controller.py  # Attitude -> Rate + Thrust
 │   ├── rate_controller.py      # Rate + Thrust -> ForceSetpoint
 │   ├── basic_controller.py     # Setpoint routing + cascade + allocation entry
@@ -247,7 +235,7 @@ control/
 
 **Target design rule:** advanced controllers should produce *setpoints* only. `basic_control` should be the reusable PX4-like autopilot stack that tracks setpoints and outputs the low-level motor command pipeline:
 
-`Position -> Velocity -> Acceleration -> Attitude -> Rate -> ForceSetpoint -> Allocation -> MotorCommand`
+`Position -> Velocity -> Attitude -> Rate -> ForceSetpoint -> Allocation -> MotorCommand`
 
 ---
 
@@ -262,9 +250,6 @@ Define a small set of typed setpoints used to connect layers:
   * `yaw_sp: float` (optional)
 * **VelocitySetpoint**
   * `v_sp_e: (3,)` velocity in **NED**
-  * `yaw_sp: float` (optional)
-* **AccelerationSetpoint**
-  * `a_sp_e: (3,)` acceleration in **NED**
   * `yaw_sp: float` (optional)
 * **AttThrustSetpoint**
   * `q_sp_eb: (4,)` desired attitude quaternion ( **body→world** , scalar-first)
@@ -290,7 +275,6 @@ Use an enum-like mode selector:
 
 * `CTRL_MODE.POSITION`
 * `CTRL_MODE.VELOCITY`
-* `CTRL_MODE.ACCELERATION`
 * `CTRL_MODE.ATT_THRUST`
 * `CTRL_MODE.RATE_THRUST`
 

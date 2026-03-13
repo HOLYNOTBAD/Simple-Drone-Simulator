@@ -43,24 +43,6 @@ class VelocitySetpoint:
 
 
 @dataclass(slots=True)
-class AccelerationSetpoint:
-    a_sp_e: np.ndarray
-    yaw_sp: Optional[float] = None
-    yawdot_sp: Optional[float] = None
-
-    def __post_init__(self) -> None:
-        self.a_sp_e = _vec(self.a_sp_e, 3, "AccelerationSetpoint.a_sp_e")
-        if self.yaw_sp is not None:
-            self.yaw_sp = float(self.yaw_sp)
-            if not np.isfinite(self.yaw_sp):
-                raise ValueError("AccelerationSetpoint.yaw_sp must be finite")
-        if self.yawdot_sp is not None:
-            self.yawdot_sp = float(self.yawdot_sp)
-            if not np.isfinite(self.yawdot_sp):
-                raise ValueError("AccelerationSetpoint.yawdot_sp must be finite")
-
-
-@dataclass(slots=True)
 class AttThrustSetpoint:
     q_sp_eb: np.ndarray
     thrust_sp: float
