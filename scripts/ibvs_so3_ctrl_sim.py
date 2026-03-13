@@ -76,9 +76,6 @@ def main():
         colors=viz_cfg.get("colors", {}),
         uav_visual_scale=float(viz_cfg.get("uav_visual_scale", 1.0)),
         target_marker_size=float(viz_cfg.get("target_marker_size", 6.0)),
-        fov_target_marker_size=float(viz_cfg.get("fov_target_marker_size", 7.0)),
-        fov_target_marker_size_min=float(viz_cfg.get("fov_target_marker_size_min", 4.0)),
-        fov_target_marker_size_max=float(viz_cfg.get("fov_target_marker_size_max", 18.0)),
         fov_target_diameter_m=float(viz_cfg.get("fov_target_diameter_m", 1.0)),
     )
 

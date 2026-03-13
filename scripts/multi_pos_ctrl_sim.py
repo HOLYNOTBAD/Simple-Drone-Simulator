@@ -17,6 +17,7 @@ try:
 except ImportError as e:
     raise SystemExit("Please install PyYAML: pip install pyyaml") from e
 
+from control.basic_control.acceleration_controller import AccelerationController, AccelerationControllerParams
 from control.basic_control.attitude_controller import AttitudeController, AttitudeControllerParams
 from control.basic_control.basic_controller import BasicController
 from control.basic_control.position_controller import PositionController, PositionControllerParams
@@ -115,6 +116,7 @@ def _load_csv_trajectories(path: str) -> dict[str, list[TrajectoryPoint]]:
 def _build_controller(cfg: dict, rb_params: RigidBodyParams) -> BasicController:
     pos_cfg = cfg.get("position_controller", {})
     vel_cfg = cfg.get("velocity_controller", {})
+    acc_cfg = cfg.get("acceleration_controller", {})
     att_cfg = cfg.get("attitude_controller", {})
 
     pos_ctrl = PositionController(
@@ -125,9 +127,13 @@ def _build_controller(cfg: dict, rb_params: RigidBodyParams) -> BasicController:
     )
     vel_ctrl = VelocityController(
         VelocityControllerParams(
-            mass=rb_params.mass,
-            g=rb_params.g,
             kp=np.array(vel_cfg.get("kp", [1.0, 1.0, 1.0]), dtype=float),
+        )
+    )
+    acc_ctrl = AccelerationController(
+        AccelerationControllerParams(
+            mass=float(acc_cfg.get("mass", rb_params.mass)),
+            g=float(acc_cfg.get("g", rb_params.g)),
         )
     )
     att_ctrl = AttitudeController(
@@ -140,6 +146,7 @@ def _build_controller(cfg: dict, rb_params: RigidBodyParams) -> BasicController:
         rb_params,
         position_controller=pos_ctrl,
         velocity_controller=vel_ctrl,
+        acceleration_controller=acc_ctrl,
         attitude_controller=att_ctrl,
     )
 
@@ -235,9 +242,6 @@ def _build_visualizer(cfg: dict, sch: MultiRateScheduler) -> Simulator:
         colors=viz_cfg.get("colors", {}),
         uav_visual_scale=float(viz_cfg.get("uav_visual_scale", 1.0)),
         target_marker_size=float(viz_cfg.get("target_marker_size", 6.0)),
-        fov_target_marker_size=float(viz_cfg.get("fov_target_marker_size", 7.0)),
-        fov_target_marker_size_min=float(viz_cfg.get("fov_target_marker_size_min", 4.0)),
-        fov_target_marker_size_max=float(viz_cfg.get("fov_target_marker_size_max", 18.0)),
         fov_target_diameter_m=float(viz_cfg.get("fov_target_diameter_m", 1.0)),
     )
 

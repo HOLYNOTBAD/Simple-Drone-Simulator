@@ -16,7 +16,6 @@ visualization:
   ned_axes: true
   uav_visual_scale: 10.0
   target_marker_size: 1.0
-  fov_target_marker_size: 0.0
   map_center: [0.0, 0.0, 1000.0]
   map_size: [1800.0, 1200.0, 600.0]
   colors:
@@ -65,6 +64,10 @@ position_controller:
 
 velocity_controller:
   kp: [1.0, 1.0, 1.2]
+
+acceleration_controller:
+  mass: 0.5
+  g: 9.81
 
 attitude_controller:
   k_r: [4.0, 4.0, 2.0]
