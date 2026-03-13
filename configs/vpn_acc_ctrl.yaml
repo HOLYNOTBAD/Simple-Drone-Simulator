@@ -53,8 +53,8 @@ uav0:
 
 tgt0:
   t: 0.0
-  p_e: [-80.0, 20.0, -10.0]
-  v_e: [4.0, -1.0, -2.0]
+  p_e: [-0.0, 20.0, -10.0]
+  v_e: [4.0, -2.0, -2.0]
 
 target:
   accel_e: null
@@ -88,7 +88,7 @@ controller:
   v_d0: 20.0
   alpha: 0.6
   k2: 0.6
-  nav_gain: 4.0
+  nav_gain: 2.0
   tau: 0.15
   k3: 0.6
   sigma_lo: 0.3

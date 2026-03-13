@@ -11,7 +11,7 @@ try:
 except ImportError as e:
     raise SystemExit("Please install PyYAML: pip install pyyaml") from e
 
-from models.state import ControlCommand, UAVState, TargetState
+from models.state import UAVState, TargetState
 from models.rigid_body import RigidBodyParams, RigidBody6DoF
 from models.motors import Motors
 from models.target import TargetParams, TargetPointMass
@@ -22,6 +22,7 @@ from sim.simulator import TerminationConfig, Simulator
 from observe.perfect import PerfectObserver
 from observe.obj_tracker import ObjTracker, ObjTrackerParams
 from control.basic_control.basic_controller import BasicController
+from control.basic_control.setpoints import AccelerationSetpoint
 from control.vpn_acc_controller import VpnAccController, VpnAccControllerParams
 from utils.config import resolve_script_config
 from utils.log import NPZLogger
@@ -169,11 +170,7 @@ def main() -> None:
 
     uav = uav0
     tgt = tgt0
-    last_cmd = ControlCommand(
-        t=uav.t,
-        thrust=float(rb_params.mass * rb_params.g),
-        omega_cmd_b=np.zeros(3, dtype=float),
-    )
+    last_sp = AccelerationSetpoint(a_sp_e=np.zeros(3, dtype=float), yaw_sp=None, yawdot_sp=0.0)
     last_i_cmd = np.zeros(rb_params.num_rotors, dtype=float)
     last_omega = np.zeros(rb_params.num_rotors, dtype=float)
     last_cam = camera.measure(uav, tgt, t_meas=uav.t)
@@ -196,13 +193,15 @@ def main() -> None:
 
         if sch.should_control(k):
             bbox_width_px = None if last_bbox is None else float(last_bbox.bw)
-            cmd = controller.compute_with_bbox(obs, bbox_width_px=bbox_width_px)
-            last_cmd = cmd
+            sp = controller.compute_with_bbox(obs, bbox=last_bbox)
+            last_sp = sp
         else:
-            cmd = last_cmd
+            sp = last_sp
             bbox_width_px = None if last_bbox is None else float(last_bbox.bw)
 
-        force_sp, motor_cmd = basic_ctrl.step_from_command(uav, cmd, sch.dt)
+        basic_ctrl.update_setpoint(sp)
+        rate_sp = basic_ctrl._resolve_rate_setpoint(uav, sp)
+        force_sp, motor_cmd = basic_ctrl.step_with_force(uav, rate_sp, sch.dt)
         motor_out = motors.step(motor_cmd.motor_current_cmd, sch.dt)
 
         uav = uav_model.step(uav, force_b=motor_out.force_b, torque_b=motor_out.torque_b, dt=sch.dt)
@@ -218,9 +217,9 @@ def main() -> None:
             monitor.push(name="bbox_height_px", color="tab:pink", data=last_bbox.bh, t=t_now, group="vpn_bbox", step=k)
         monitor.push(name="cmd_thrust", color="tab:red", data=force_sp.thrust_sp, t=t_now, group="command", step=k)
         monitor.push(name="actual_thrust", color="tab:blue", data=actual_thrust, t=t_now, group="command", step=k)
-        monitor.push(name="cmd_x", color="tab:red", data=cmd.omega_cmd_b[0], t=t_now, group="omega_cmd", step=k)
-        monitor.push(name="cmd_y", color="tab:orange", data=cmd.omega_cmd_b[1], t=t_now, group="omega_cmd", step=k)
-        monitor.push(name="cmd_z", color="tab:green", data=cmd.omega_cmd_b[2], t=t_now, group="omega_cmd", step=k)
+        monitor.push(name="cmd_x", color="tab:red", data=rate_sp.omega_sp_b[0], t=t_now, group="omega_cmd", step=k)
+        monitor.push(name="cmd_y", color="tab:orange", data=rate_sp.omega_sp_b[1], t=t_now, group="omega_cmd", step=k)
+        monitor.push(name="cmd_z", color="tab:green", data=rate_sp.omega_sp_b[2], t=t_now, group="omega_cmd", step=k)
         monitor.push(name="actual_x", color="tab:blue", data=uav.w_b[0], t=t_now, group="omega_cmd", step=k)
         monitor.push(name="actual_y", color="tab:cyan", data=uav.w_b[1], t=t_now, group="omega_cmd", step=k)
         monitor.push(name="actual_z", color="tab:purple", data=uav.w_b[2], t=t_now, group="omega_cmd", step=k)
@@ -247,8 +246,8 @@ def main() -> None:
                 logger.push("cam_valid", bool(last_cam.valid))
                 logger.push("cam_p_norm", nan2 if last_cam.p_norm is None else last_cam.p_norm)
                 logger.push("cam_uv", nan2 if last_cam.uv_px is None else last_cam.uv_px)
-            logger.push("cmd_thrust", cmd.thrust)
-            logger.push("cmd_omega", cmd.omega_cmd_b)
+            logger.push("cmd_thrust", force_sp.thrust_sp)
+            logger.push("cmd_omega", rate_sp.omega_sp_b)
             logger.push("force_sp_thrust", force_sp.thrust_sp)
             logger.push("force_sp_tau", force_sp.tau_sp_b)
             logger.push("motor_cmd", motor_cmd.motor_current_cmd)

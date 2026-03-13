@@ -65,6 +65,10 @@ position_controller:
 velocity_controller:
   kp: [1.0, 1.0, 1.2]
 
+acceleration_controller:
+  mass: 0.5
+  g: 9.81
+
 attitude_controller:
   k_r: [4.0, 4.0, 2.0]
   omega_max: 6.0

@@ -534,7 +534,7 @@ class Simulator:
     def _pixel_to_fov_deg(self, u_px: float, v_px: float) -> tuple[float, float]:
         x_norm = (float(u_px) - self.cam_cx) / max(self.cam_fx, 1e-9)
         y_norm = (float(v_px) - self.cam_cy) / max(self.cam_fy, 1e-9)
-        x_deg = float(-np.degrees(np.arctan(x_norm)))
+        x_deg = float(np.degrees(np.arctan(x_norm)))
         y_deg = float(np.degrees(np.arctan(y_norm)))
         return x_deg, y_deg
 
@@ -1011,7 +1011,7 @@ class Simulator:
         if cam.uv_px is not None:
             x_deg, y_deg = self._pixel_to_fov_deg(float(cam.uv_px[0]), float(cam.uv_px[1]))
         else:
-            x_deg = float(-np.degrees(np.arctan(cam.p_norm[0])))
+            x_deg = float(np.degrees(np.arctan(cam.p_norm[0])))
             y_deg = float(np.degrees(np.arctan(cam.p_norm[1])))
         self._fov_target_dot.set_data([x_deg], [y_deg])
         self._fov_target_dot.set_markersize(self._fov_marker_size_for_apparent_angle(cam.p_norm, cam.range_m))

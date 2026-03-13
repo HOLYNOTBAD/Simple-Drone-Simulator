@@ -9,6 +9,7 @@ try:
 except ImportError as e:
     raise SystemExit("Please install PyYAML: pip install pyyaml") from e
 
+from control.basic_control.acceleration_controller import AccelerationController, AccelerationControllerParams
 from control.basic_control.attitude_controller import AttitudeController, AttitudeControllerParams
 from control.basic_control.basic_controller import BasicController
 from control.basic_control.position_controller import PositionController, PositionControllerParams
@@ -22,6 +23,7 @@ from sensors.camera import CameraExtrinsics, CameraIntrinsics, PinholeCamera
 from sim.scheduler import MultiRateScheduler, RateConfig
 from sim.simulator import Simulator, TerminationConfig
 from utils.config import resolve_script_config
+from visualization.monitor import Monitor, MonitorConfig
 
 
 def _load_cfg(path: str) -> dict:
@@ -63,6 +65,7 @@ def main() -> None:
     seed = int(cfg.get("seed", cfg.get("logging", {}).get("seed", 0)))
     np.random.seed(seed)
 
+    mon_cfg = cfg.get("monitor", {})
     rates_cfg = cfg["rates"]
     rates = RateConfig(
         physics_hz=float(rates_cfg["physics_hz"]),
@@ -71,6 +74,7 @@ def main() -> None:
         visualization_hz=float(rates_cfg.get("visualization_hz", 10.0)),
     )
     sch = MultiRateScheduler(rates)
+
 
     viz_cfg = cfg.get("visualization", {})
     sim_viz = Simulator(
@@ -155,6 +159,7 @@ def main() -> None:
 
     pos_cfg = cfg.get("position_controller", {})
     vel_cfg = cfg.get("velocity_controller", {})
+    acc_cfg = cfg.get("acceleration_controller", {})
     att_cfg = cfg.get("attitude_controller", {})
 
     pos_ctrl = PositionController(
@@ -165,9 +170,13 @@ def main() -> None:
     )
     vel_ctrl = VelocityController(
         VelocityControllerParams(
-            mass=rb_params.mass,
-            g=rb_params.g,
             kp=np.array(vel_cfg.get("kp", [1.0, 1.0, 1.0]), dtype=float),
+        )
+    )
+    acc_ctrl = AccelerationController(
+        AccelerationControllerParams(
+            mass=float(acc_cfg.get("mass", rb_params.mass)),
+            g=float(acc_cfg.get("g", rb_params.g)),
         )
     )
     att_ctrl = AttitudeController(
@@ -180,6 +189,7 @@ def main() -> None:
         rb_params,
         position_controller=pos_ctrl,
         velocity_controller=vel_ctrl,
+        acceleration_controller=acc_ctrl,
         attitude_controller=att_ctrl,
     )
 
@@ -210,6 +220,20 @@ def main() -> None:
     err_norm = float(np.linalg.norm(obs_p_r))
     last_cam = None
     last_bbox = None
+
+
+    monitor = Monitor(
+        scheduler=sch,
+        cfg=MonitorConfig(
+            enable=bool(mon_cfg.get("enable", True)),
+            realtime=bool(mon_cfg.get("realtime", True)),
+            max_points=mon_cfg.get("max_points", None),
+            step_stride=int(mon_cfg.get("step_stride", 1)),
+            title=str(mon_cfg.get("title", "Pos Controller Monitor")),
+            x_min=float(mon_cfg.get("x_min", 0.0)),
+            x_max=float(mon_cfg.get("x_max", t_final)),
+        ),
+    )
 
     ############### Main simulation loop ##############
 
@@ -246,6 +270,19 @@ def main() -> None:
 
         np.subtract(uav.p_e, p_sp_e, out=obs_p_r)
         err_norm = float(np.linalg.norm(obs_p_r))
+
+        monitor.push(name="err_norm", color="tab:red", data=err_norm, t=uav.t, group="position_error", step=k)
+        monitor.push(name="err_x", color="tab:blue", data=float(obs_p_r[0]), t=uav.t, group="position_error", step=k)
+        monitor.push(name="err_y", color="tab:green", data=float(obs_p_r[1]), t=uav.t, group="position_error", step=k)
+        monitor.push(name="err_z", color="tab:orange", data=float(obs_p_r[2]), t=uav.t, group="position_error", step=k)
+        monitor.push(name="vx", color="tab:blue", data=float(uav.v_e[0]), t=uav.t, group="velocity", step=k)
+        monitor.push(name="vy", color="tab:green", data=float(uav.v_e[1]), t=uav.t, group="velocity", step=k)
+        monitor.push(name="vz", color="tab:orange", data=float(uav.v_e[2]), t=uav.t, group="velocity", step=k)
+        if last_cam is not None and last_cam.uv_px is not None:
+            monitor.push(name="cam_u", color="tab:red", data=float(last_cam.uv_px[0]), t=uav.t, group="camera_data", step=k)
+            monitor.push(name="cam_v", color="tab:blue", data=float(last_cam.uv_px[1]), t=uav.t, group="camera_data", step=k)
+        monitor.update(step=k)
+
 
     ############## Simulation ended, prepare summary and save logs if enabled ##############
     summary = {
