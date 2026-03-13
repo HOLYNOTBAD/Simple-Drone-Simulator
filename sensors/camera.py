@@ -43,7 +43,7 @@ class CameraExtrinsics:
     to the aircraft forward axis.
     """
     use_default_frd_to_camera: bool = True
-    mount_pitch_deg: float = 0.0
+    mount_pitch_deg: float = 20.0
 
 
 class PinholeCamera:

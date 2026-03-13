@@ -15,6 +15,7 @@ visualization:
   ned_axes: true
   uav_visual_scale: 3.0
   target_marker_size: 5.0
+  fov_target_marker_size: 7.0
   fov_target_diameter_m: 2.0
   map_center: [0.0, 0.0, -50.0]
   map_size: [200.0, 100.0, 100.0]

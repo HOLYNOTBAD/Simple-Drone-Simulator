@@ -10,12 +10,13 @@ rates:
 visualization:
   enable: true
   realtime: true
-  enable_fov: true
+  enable_fov: false
   trail_len: 200
   auto_axis: false
   ned_axes: true
   uav_visual_scale: 2.0
   target_marker_size: 6.0
+  fov_target_marker_size: 7.0
   map_center: [0.0, 0.0, 0.0]
   map_size: [120.0, 80.0, 60.0]
   colors:
@@ -25,8 +26,8 @@ visualization:
     uav_arrow: [204, 74, 116]
     target_traj: [252, 180, 49]
     target_dot: [235, 120, 82]
-  enable_realtime_animation: true
-  enable_offline_animation: false
+  enable_realtime_animation: false
+  enable_offline_animation: true
   save_cache: false
 
 
@@ -68,18 +69,7 @@ position_controller:
 velocity_controller:
   kp: [1.0, 1.0, 1.2]
 
-acceleration_controller:
-  mass: 0.5
-  g: 9.81
-
 attitude_controller:
   k_r: [4.0, 4.0, 2.0]
   omega_max: 6.0
 
-monitor:
-  enable: true
-  realtime: true
-  max_points: null
-  step_stride: 10
-  title: "Pos Controller Monitor"
-  x_min: 0.0

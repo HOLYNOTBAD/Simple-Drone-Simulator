@@ -8,11 +8,10 @@ import numpy as np
 from models.rigid_body import RigidBodyParams
 from models.state import ControlCommand, ForceSetpoint, MotorCommand, Observation, UAVState
 
-from .acceleration_controller import AccelerationController, AccelerationControllerParams
 from .attitude_controller import AttitudeController, AttitudeControllerParams
 from .position_controller import PositionController, PositionControllerParams
 from .rate_controller import RateController, RateControllerParams
-from .setpoints import AccelerationSetpoint, AttThrustSetpoint, PositionSetpoint, RateThrustSetpoint, VelocitySetpoint
+from .setpoints import AttThrustSetpoint, PositionSetpoint, RateThrustSetpoint, VelocitySetpoint
 from .velocity_controller import VelocityController, VelocityControllerParams
 
 
@@ -26,7 +25,6 @@ class AllocationParams:
 class CTRL_MODE(Enum):
     POSITION = "position"
     VELOCITY = "velocity"
-    ACCELERATION = "acceleration"
     ATT_THRUST = "att_thrust"
     RATE_THRUST = "rate_thrust"
 
@@ -84,7 +82,7 @@ class BasicController:
     Unified PX4-like basic control entry.
 
     Supported path:
-            PositionSetpoint -> VelocitySetpoint -> AccelerationSetpoint -> AttThrustSetpoint ->
+      PositionSetpoint -> VelocitySetpoint -> AttThrustSetpoint ->
       RateThrustSetpoint -> ForceSetpoint -> MotorCommand
 
     Transitional path:
@@ -97,7 +95,6 @@ class BasicController:
         *,
         position_controller: PositionController | None = None,
         velocity_controller: VelocityController | None = None,
-        acceleration_controller: AccelerationController | None = None,
         attitude_controller: AttitudeController | None = None,
     ):
         self.rb_params = rb_params
@@ -105,10 +102,7 @@ class BasicController:
             PositionControllerParams()
         )
         self.velocity_controller = velocity_controller or VelocityController(
-            VelocityControllerParams()
-        )
-        self.acceleration_controller = acceleration_controller or AccelerationController(
-            AccelerationControllerParams(mass=rb_params.mass, g=rb_params.g)
+            VelocityControllerParams(mass=rb_params.mass, g=rb_params.g)
         )
         self.attitude_controller = attitude_controller or AttitudeController(
             AttitudeControllerParams()
@@ -135,7 +129,6 @@ class BasicController:
     def reset(self) -> None:
         self.position_controller.reset()
         self.velocity_controller.reset()
-        self.acceleration_controller.reset()
         self.attitude_controller.reset()
         self.rate_controller.reset()
 
@@ -145,8 +138,6 @@ class BasicController:
             self.mode = CTRL_MODE.POSITION
         elif isinstance(sp, VelocitySetpoint):
             self.mode = CTRL_MODE.VELOCITY
-        elif isinstance(sp, AccelerationSetpoint):
-            self.mode = CTRL_MODE.ACCELERATION
         elif isinstance(sp, AttThrustSetpoint):
             self.mode = CTRL_MODE.ATT_THRUST
         elif isinstance(sp, RateThrustSetpoint):
@@ -159,8 +150,6 @@ class BasicController:
             sp = self.position_controller.step(uav_state, sp)
         if isinstance(sp, VelocitySetpoint):
             sp = self.velocity_controller.step(uav_state, sp)
-        if isinstance(sp, AccelerationSetpoint):
-            sp = self.acceleration_controller.step(uav_state, sp)
         if isinstance(sp, AttThrustSetpoint):
             sp = self.attitude_controller.step(uav_state, sp)
         if not isinstance(sp, RateThrustSetpoint):
