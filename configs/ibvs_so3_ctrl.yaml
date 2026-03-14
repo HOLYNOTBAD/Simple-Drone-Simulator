@@ -29,8 +29,8 @@ visualization:
     fov_target: [181, 35, 4]
     fov_status_no_target: [181, 35, 4]
     fov_status_has_target: [0, 128, 0]
-  enable_realtime_animation: true
-  enable_offline_animation: false
+  enable_realtime_animation: false
+  enable_offline_animation: true
   save_cache: false
 
 termination:
@@ -62,11 +62,21 @@ rigid_body:
 camera:
   fx: 320.0
   fy: 320.0
+  fov_x_deg: null
+  fov_y_deg: null
   cx: 320.0
   cy: 240.0
   width: 640
   height: 480
+  use_default_frd_to_camera: true
   mount_pitch_deg: 0.0
+  R_cb: null
+  t_cb_b: [0.0, 0.0, 0.0]
+  noise_std_px: 1.0
+  noise_std_range_scale_px: 2.0
+  detection_prob: 0.98
+  detection_range_decay_m: 120.0
+  delay_s: 0.02
 
 # --- Controller (IBVS-SO3 baseline) ---
 controller:
@@ -84,4 +94,4 @@ logging:
   enable: false
   run_dir: "runs"
   filename: null   # null -> auto timestamp
-  seed: 0
+  seed: 42
