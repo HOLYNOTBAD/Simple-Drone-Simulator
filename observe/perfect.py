@@ -42,6 +42,8 @@ class PerfectObserver:
                 v_e=uav.v_e,
                 p_r=p_r,
                 v_r=v_r,
+                bearing_c=None,
+                range_m=None,
                 has_target=False,
             )
 
@@ -53,5 +55,7 @@ class PerfectObserver:
             v_e=uav.v_e,
             p_r=p_r,
             v_r=v_r,
+            bearing_c=cam.bearing_c,
+            range_m=cam.range_m,
             has_target=True,  # includes out-of-frame bearing when p_norm is available
         )

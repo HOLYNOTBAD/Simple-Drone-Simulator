@@ -50,11 +50,21 @@ rigid_body:
 camera:
   fx: 320.0
   fy: 320.0
+  fov_x_deg: null
+  fov_y_deg: null
   cx: 320.0
   cy: 240.0
   width: 640
   height: 480
+  use_default_frd_to_camera: true
   mount_pitch_deg: 0.0
+  R_cb: null
+  t_cb_b: [0.0, 0.0, 0.0]
+  noise_std_px: 0.0
+  noise_std_range_scale_px: 0.0
+  detection_prob: 1.0
+  detection_range_decay_m: 0.0
+  delay_s: 0.0
 
 # --- Position control test setpoint ---
 position_setpoint:

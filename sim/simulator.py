@@ -416,7 +416,10 @@ class Simulator:
                 if cam is None
                 else {
                     "t_meas": float(cam.t_meas),
+                    "p_cam": None if cam.p_cam is None else np.asarray(cam.p_cam, dtype=float).copy(),
+                    "bearing_c": None if cam.bearing_c is None else np.asarray(cam.bearing_c, dtype=float).copy(),
                     "p_norm": None if cam.p_norm is None else np.asarray(cam.p_norm, dtype=float).copy(),
+                    "uv_px": None if cam.uv_px is None else np.asarray(cam.uv_px, dtype=float).copy(),
                     "valid": bool(cam.valid),
                     "range_m": None if cam.range_m is None else float(cam.range_m),
                 },
@@ -459,7 +462,10 @@ class Simulator:
                 if cam is None
                 else {
                     "t_meas": float(cam.t_meas),
+                    "p_cam": None if cam.p_cam is None else np.asarray(cam.p_cam, dtype=float).copy(),
+                    "bearing_c": None if cam.bearing_c is None else np.asarray(cam.bearing_c, dtype=float).copy(),
                     "p_norm": None if cam.p_norm is None else np.asarray(cam.p_norm, dtype=float).copy(),
+                    "uv_px": None if cam.uv_px is None else np.asarray(cam.uv_px, dtype=float).copy(),
                     "valid": bool(cam.valid),
                     "range_m": None if cam.range_m is None else float(cam.range_m),
                 },
@@ -710,8 +716,10 @@ class Simulator:
             return None
         return CameraMeasurement(
             t_meas=float(frame["t_meas"]),
+            p_cam=None if frame.get("p_cam") is None else np.asarray(frame["p_cam"], dtype=float),
+            bearing_c=None if frame.get("bearing_c") is None else np.asarray(frame["bearing_c"], dtype=float),
             p_norm=None if frame["p_norm"] is None else np.asarray(frame["p_norm"], dtype=float),
-            uv_px=None,
+            uv_px=None if frame.get("uv_px") is None else np.asarray(frame["uv_px"], dtype=float),
             range_m=frame["range_m"],
             valid=bool(frame["valid"]),
         )

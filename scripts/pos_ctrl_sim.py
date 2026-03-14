@@ -17,7 +17,7 @@ from control.basic_control.velocity_controller import VelocityController, Veloci
 from models.motors import Motors
 from models.rigid_body import RigidBody6DoF, RigidBodyParams
 from models.state import Observation, TargetState, UAVState
-from sensors.camera import CameraExtrinsics, CameraIntrinsics, PinholeCamera
+from sensors.camera import build_camera_from_config
 from sim.scheduler import MultiRateScheduler, RateConfig
 from sim.simulator import Simulator, TerminationConfig
 from utils.config import resolve_script_config
@@ -59,6 +59,7 @@ def main() -> None:
 
     config_path = resolve_script_config(__file__, args.config)
     cfg = _load_cfg(config_path)
+    camera = build_camera_from_config(cfg.get("camera", {}))
     seed = int(cfg.get("seed", cfg.get("logging", {}).get("seed", 0)))
     np.random.seed(seed)
 
@@ -80,12 +81,12 @@ def main() -> None:
         save_cache=bool(viz_cfg.get("save_cache", False)),
         realtime=bool(viz_cfg.get("realtime", True)),
         enable_fov=bool(viz_cfg.get("enable_fov", True)),
-        cam_width=int(cfg.get("camera", {}).get("width", 640)),
-        cam_height=int(cfg.get("camera", {}).get("height", 480)),
-        cam_fx=float(cfg.get("camera", {}).get("fx", 320.0)),
-        cam_fy=float(cfg.get("camera", {}).get("fy", 320.0)),
-        cam_cx=float(cfg.get("camera", {}).get("cx", 320.0)),
-        cam_cy=float(cfg.get("camera", {}).get("cy", 240.0)),
+        cam_width=int(camera.K.width),
+        cam_height=int(camera.K.height),
+        cam_fx=float(camera.K.fx),
+        cam_fy=float(camera.K.fy),
+        cam_cx=float(camera.K.cx),
+        cam_cy=float(camera.K.cy),
         trail_len=int(viz_cfg.get("trail_len", 1000)),
         auto_axis=bool(viz_cfg.get("auto_axis", False)),
         ned_axes=bool(viz_cfg.get("ned_axes", True)),
@@ -125,21 +126,6 @@ def main() -> None:
     rb_params = RigidBodyParams.from_yaml(cfg["rigid_body"]["params_yaml"])
     uav_model = RigidBody6DoF(rb_params)
     motors = Motors(rb_params)
-
-    cam_cfg = cfg.get("camera", {})
-    camera = PinholeCamera(
-        CameraIntrinsics(
-            fx=float(cam_cfg.get("fx", 320.0)),
-            fy=float(cam_cfg.get("fy", 320.0)),
-            cx=float(cam_cfg.get("cx", 320.0)),
-            cy=float(cam_cfg.get("cy", 240.0)),
-            width=int(cam_cfg.get("width", 640)),
-            height=int(cam_cfg.get("height", 480)),
-        ),
-        CameraExtrinsics(
-            mount_pitch_deg=float(cam_cfg.get("mount_pitch_deg", 20.0)),
-        ),
-    )
 
     pos_cfg = cfg.get("position_controller", {})
     vel_cfg = cfg.get("velocity_controller", {})

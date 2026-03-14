@@ -16,7 +16,7 @@ from models.state import ControlCommand, UAVState, TargetState
 from models.rigid_body import RigidBodyParams, RigidBody6DoF
 from models.motors import Motors
 from models.target import TargetParams, TargetPointMass
-from sensors.camera import CameraIntrinsics, CameraExtrinsics, PinholeCamera
+from sensors.camera import build_camera_from_config
 from sim.scheduler import RateConfig, MultiRateScheduler
 from sim.simulator import TerminationConfig, Simulator
 
@@ -43,6 +43,7 @@ def main():
 
     config_path = resolve_script_config(__file__, args.config)
     cfg = _load_cfg(config_path)
+    camera = build_camera_from_config(cfg.get("camera"))
 
     logger_cfg = cfg.get("logging", {})
 
@@ -70,12 +71,12 @@ def main():
         save_cache=bool(viz_cfg.get("save_cache", False)),
         realtime=bool(viz_cfg.get("realtime", True)),
         enable_fov=bool(viz_cfg.get("enable_fov", True)),
-        cam_width=int(cfg["camera"].get("width", 640)),
-        cam_height=int(cfg["camera"].get("height", 480)),
-        cam_fx=float(cfg["camera"].get("fx", 320.0)),
-        cam_fy=float(cfg["camera"].get("fy", 320.0)),
-        cam_cx=float(cfg["camera"].get("cx", 320.0)),
-        cam_cy=float(cfg["camera"].get("cy", 240.0)),
+        cam_width=int(camera.K.width),
+        cam_height=int(camera.K.height),
+        cam_fx=float(camera.K.fx),
+        cam_fy=float(camera.K.fy),
+        cam_cx=float(camera.K.cx),
+        cam_cy=float(camera.K.cy),
         trail_len=int(viz_cfg.get("trail_len", 1000)),
         auto_axis=bool(viz_cfg.get("auto_axis", False)),
         ned_axes=bool(viz_cfg.get("ned_axes", True)),
@@ -116,23 +117,6 @@ def main():
     tg = cfg.get("target", {})
     accel = tg.get("accel_e", None)
     tgt_model = TargetPointMass(TargetParams(accel_e=None if accel is None else np.array(accel, dtype=float)))
-
-    # Camera
-    cam = cfg["camera"]
-    K = CameraIntrinsics(
-        fx=float(cam["fx"]),
-        fy=float(cam["fy"]),
-        cx=float(cam["cx"]),
-        cy=float(cam["cy"]),
-        width=int(cam["width"]),
-        height=int(cam["height"]),
-    )
-    camera = PinholeCamera(
-        K,
-        CameraExtrinsics(
-            mount_pitch_deg=float(cam.get("mount_pitch_deg", 20.0)),
-        ),
-    )
 
     # Observer 
     observer = PerfectObserver()

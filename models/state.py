@@ -102,6 +102,8 @@ class CameraMeasurement:
     """
     Camera measurement at a (possibly delayed) timestamp.
 
+    p_cam: target relative position in camera frame {c}, meters (optional)
+    bearing_c: unit line-of-sight vector in camera frame {c} (optional)
     p_norm: normalized image coordinate (x/z, y/z) in image plane (dimensionless)
             i.e., [u/fx, v/fy] if principal point removed and fx=fy=foc in pixels
     uv_px:  pixel coordinate [u, v] in pixels (optional, for logging/debug)
@@ -109,12 +111,20 @@ class CameraMeasurement:
     valid:  whether the target is within FOV / successfully detected
     """
     t_meas: float
+    p_cam: Optional[Array] = None         # shape (3,)
+    bearing_c: Optional[Array] = None     # shape (3,)
     p_norm: Optional[Array] = None        # shape (2,)
     uv_px: Optional[Array] = None         # shape (2,)
     range_m: Optional[float] = None
     valid: bool = True
 
     def __post_init__(self) -> None:
+        if self.p_cam is not None:
+            self.p_cam = _as_vec(self.p_cam, 3, "CameraMeasurement.p_cam")
+            _is_finite(self.p_cam, "CameraMeasurement.p_cam")
+        if self.bearing_c is not None:
+            self.bearing_c = _as_vec(self.bearing_c, 3, "CameraMeasurement.bearing_c")
+            _is_finite(self.bearing_c, "CameraMeasurement.bearing_c")
         if self.p_norm is not None:
             self.p_norm = _as_vec(self.p_norm, 2, "CameraMeasurement.p_norm")
             _is_finite(self.p_norm, "CameraMeasurement.p_norm")
@@ -139,6 +149,7 @@ class Observation:
 
     Minimal recommended fields for IBVS-style interception:
     - p_norm: normalized image feature (2D)
+    - bearing_c: unit line-of-sight vector in camera frame (optional)
     - q_eb, w_b: UAV attitude & body angular rate (available from IMU in real systems)
     - v_e: UAV velocity in world (can be estimated; optional but often useful)
     - p_r: interceptor relative position in world, p_uav - p_tgt
@@ -152,6 +163,8 @@ class Observation:
     v_e: Array                            # shape (3,)
     p_r: Optional[Array] = None           # shape (3,)
     v_r: Optional[Array] = None           # shape (3,)
+    bearing_c: Optional[Array] = None     # shape (3,)
+    range_m: Optional[float] = None
     has_target: bool = True
 
     def __post_init__(self) -> None:
@@ -164,12 +177,19 @@ class Observation:
         if self.v_r is not None:
             self.v_r = _as_vec(self.v_r, 3, "Observation.v_r")
             _is_finite(self.v_r, "Observation.v_r")
+        if self.bearing_c is not None:
+            self.bearing_c = _as_vec(self.bearing_c, 3, "Observation.bearing_c")
+            _is_finite(self.bearing_c, "Observation.bearing_c")
         self.q_eb = _as_quat(self.q_eb, "Observation.q_eb")
         self.w_b = _as_vec(self.w_b, 3, "Observation.w_b")
         self.v_e = _as_vec(self.v_e, 3, "Observation.v_e")
         _is_finite(self.q_eb, "Observation.q_eb")
         _is_finite(self.w_b, "Observation.w_b")
         _is_finite(self.v_e, "Observation.v_e")
+        if self.range_m is not None:
+            self.range_m = float(self.range_m)
+            if not np.isfinite(self.range_m):
+                raise ValueError("Observation.range_m must be finite")
 
 
 @dataclass(slots=True)
